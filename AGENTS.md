@@ -103,6 +103,22 @@ For first-launch evidence, compare the captured window’s client area with Hell
 
 Attach the native OS, architecture, Qt version, platform plugin, theme source, scaling, checks, numerical measurements, and screenshot files to each run. Review the rendered images as well as the numerical results. A text field can have sufficient measured contrast while being crowded into half a line. A menu can be readable while displaying a generic Qt placeholder icon. A palette on an offscreen plugin cannot establish the appearance of the native platform. Keep failed evidence and any reproducible defect with the correction until it passes on the affected platform. The Actions run also records package hashes and the source archive. [Build and appearance runs](https://github.com/AlfredoLlaquet/helloneedle/actions)
 
+### Native appearance in 1.0.0
+
+Each environment below passed 59 GUI checks across ten configurations. The tests used fresh profiles and the installed 1.0.0 worker. Separate smoke tests launched the packaged application, searched a real folder and opened the selected passage. The galleries preserve original PNGs from the native run for commit `011e2406e5cc`. [Build, packages, manifests and full screenshot sets](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45262698979)
+
+| Tested system | Qt | Screenshots | Window and controls |
+| --- | --- | ---: | --- |
+| FreeBSD 15.1-RELEASE-p6, amd64 | 6.11.3 | 77 | [First launch](docs/screenshots/1.0.0/freebsd-first-launch.png) · [Spanish dark mode at 150%](docs/screenshots/1.0.0/freebsd-spanish-dark.png) |
+| Ubuntu 24.04.5 LTS, x86-64 | 6.4.2 | 81 | [First launch](docs/screenshots/1.0.0/ubuntu-first-launch.png) · [Spanish dark mode at 150%](docs/screenshots/1.0.0/ubuntu-spanish-dark.png) |
+| Windows 11 Enterprise, Arm64 running the x64 build | 6.12.0 | 84 | [First launch](docs/screenshots/1.0.0/win11-first-launch.png) · [Spanish dark mode at 150%](docs/screenshots/1.0.0/win11-spanish-dark.png) |
+| Windows Server 2025 Datacenter, x64 | 6.12.0 | 84 | [First launch](docs/screenshots/1.0.0/winserver-first-launch.png) · [Spanish dark mode at 150%](docs/screenshots/1.0.0/winserver-spanish-dark.png) |
+| macOS Sequoia 15.7.9, Intel | 6.12.0 | 84 | [First launch](docs/screenshots/1.0.0/macintel-first-launch.png) · [Spanish dark mode at 150%](docs/screenshots/1.0.0/macintel-spanish-dark.png) |
+
+The first-launch column shows the host’s default appearance. The dark-mode images show Spanish controls at increased scaling with the options expanded. FreeBSD and Ubuntu used X11 with Openbox. Their explicit dark runs used a test palette with the native XCB plugin. Windows used its platform settings. On macOS Sequoia, the application used Cocoa. The desktop kept its light system menu bar in both application themes. The tests verified that Hello Needle owned that menu bar and that all four application menus showed their English or Spanish titles. The screenshot manifests identify the capture source for each window.
+
+The search suite verified 15 selected occurrences across 13 document formats, checked Word 97 text with the converter path empty and compared the original files before and after the tests. The corresponding-source archive also built and installed the Qt application with an empty Cargo registry and all 110 bundled dependencies. The resulting program passed the installed search and preview tests.
+
 ## Historical FreeBSD reference
 
 The original baseline is Clapgrep `v26.09` plus the upstream translation update at `5642bbee94b6684192fa075403222f2d4e2f7559`. The FreeBSD port revision `a88d6100d68c09405abb7f21ff55b3f1afaeb714` added native installation and real installed GTK application tests. The layout revision verified FreeBSD 15.1-RELEASE-p6 amd64 in both English and Spanish. In each locale Meson validated desktop metadata and ran the Rust workspace tests. Four installed GUI searches found a plain-text passage on line 3, a PDF match on page 2, and a DOCX paragraph, then covered empty and repeated searches. The test also exercised the optional Nautilus integration. The inherited Linux Flatpak workflow is disabled. The dedicated Hello Needle jobs build the new application independently. [Verified reference run](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45243533421) · [Historical build, installation and tests](https://github.com/AlfredoLlaquet/helloneedle/blob/b96ee0e4c4ca216b6a35bced52e6457ac7ff497f/README.md#build-the-current-freebsd-reference)

@@ -16,6 +16,8 @@ Created by **Alfredo Llaquet-Alsina**. **Programmed by ChatGPT.** [Origins and c
 
 **En español.** Hello Needle busca palabras y frases en los documentos de una carpeta. Escribe una expresión, pulsa **Intro** y selecciona una coincidencia para leer el pasaje. En HTML y Markdown, el modo **Documento** busca el texto visible y el modo **Fuente** busca las etiquetas o el marcado. El menú **Idioma** permite elegir español o inglés.
 
+[First-launch and dark-mode screenshots on each tested desktop](AGENTS.md#native-appearance-in-100)
+
 ## Documents
 
 | Format | Where a match opens |
@@ -32,14 +34,14 @@ Office previews show a passage in reading order. Pagination and layout can diffe
 
 ## Install and run
 
-The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-worker` automatically. The FreeBSD/Linux package-manager builds, Windows UCRT64 archive, and macOS app use separately installed Qt and document tools. Binary artifacts are accompanied by the exact project source, locked Rust dependencies, checksums, and the build inventory. [Native builds, GUI screenshots, and artifacts](https://github.com/AlfredoLlaquet/helloneedle/actions) · [Build and packaging record](AGENTS.md#build-install-and-package)
+The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-worker` automatically. The FreeBSD/Linux package-manager builds, Windows UCRT64 archive, and macOS app use separately installed Qt and document tools. Binary artifacts are accompanied by the exact project source, locked Rust dependencies, checksums, and the build inventory. [Download 1.0.0 packages and matching source](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45262698979#artifacts) · [Build and packaging record](AGENTS.md#build-install-and-package)
 
 | Platform | Runtime and package |
 | --- | --- |
 | FreeBSD | Install the `.pkg` with `pkg add ./<package>.pkg` on a compatible FreeBSD release. Qt 6, Poppler utilities, and antiword come from FreeBSD packages. Launch **Hello Needle** from the desktop or run `helloneedle`. |
 | Linux | On the matching Ubuntu release, install the downloaded `.deb` with `sudo apt install ./<package>.deb`. A graphical desktop entry and the `helloneedle` command are installed. Other distributions can build from source. |
 | Windows | Use the MSYS2 **UCRT64** build. Install the MSYS2 runtime packages, extract the archive, and double-click **Hello Needle.exe** at its top level. [Windows runtime instructions](packaging/WINDOWS.txt) |
-| macOS | Choose the `arm64` archive for macOS 26 Tahoe on Apple Silicon or `x86_64` for macOS 15 Sequoia on Intel. Both use MacPorts in `/opt/local`. Install the runtime packages, extract **Hello Needle.app**, and open it in Finder. Both bundles carry an ad hoc signature. [macOS runtime instructions](packaging/MACOS.txt) |
+| macOS | The verified Intel archive targets macOS 15 Sequoia (`x86_64`). The Apple Silicon build targets macOS 26 Tahoe (`arm64`). Install the MacPorts runtime packages in `/opt/local`, extract the ad hoc signed **Hello Needle.app**, and open it in Finder. [macOS runtime instructions](packaging/MACOS.txt) |
 
 ### Build from source
 
