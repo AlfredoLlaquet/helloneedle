@@ -1,644 +1,101 @@
-name: Hello Needle native builds
+name: Clean Apple Silicon Universal installer check
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [hello-needle-mac-qa]
+  workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
-env:
-  CARGO_BUILD_JOBS: '2'
 
 jobs:
-  source:
-    name: Corresponding source and Rust dependencies
-    runs-on: ubuntu-24.04
-    outputs:
-      version: ${{ steps.source.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Build and verify the source archive offline
-        id: source
-        shell: bash
-        run: |
-          set -eu
-          mkdir -p native-out/source
-          version=$(cargo metadata --no-deps --locked --format-version 1 --manifest-path bridge/Cargo.toml |
-            jq -er '.packages[] | select(.name == "helloneedle-worker") | .version')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          archive="native-out/source/helloneedle-$version-source-$GITHUB_SHA.tar.gz"
-          python3 tools/source_bundle.py --output "$archive"
-          (cd native-out/source && sha256sum *.tar.gz > SHA256SUMS)
-          unpack=$(mktemp -d)
-          tar -xzf "$archive" -C "$unpack"
-          cd "$unpack"/helloneedle-*
-          test "$(cat SOURCE-REVISION.txt)" = "$GITHUB_SHA"
-          CARGO_HOME="$unpack/cargo-home" cargo test --offline --locked --manifest-path bridge/Cargo.toml
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: helloneedle-corresponding-source
-          path: native-out/source/
-          compression-level: 0
-          if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-source-checksum
-          path: native-out/source/SHA256SUMS
-          if-no-files-found: error
-
-  ubuntu:
-    name: Ubuntu 24.04 x64, Debian package and native X11
-    needs: source
-    runs-on: ubuntu-24.04
-    timeout-minutes: 50
+  install:
+    if: github.ref_name == 'hello-needle-mac-qa'
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      SOURCE_RUN: '45279043342'
+      SOURCE_SHA: 485068fe182d063eacd189826610a46aaa478c71
+      ARTIFACT_NAME: helloneedle-macos-universal-installer
+      STEM: HelloNeedle-1.0.0-macOS-Universal
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build qt6-base-dev qt6-qpa-plugins \
-            qt6-gtk-platformtheme qt6-translations-l10n poppler-utils antiword dpkg-dev xvfb openbox dbus-daemon \
-            fonts-dejavu-core libxcb-cursor0
-      - name: Build the package and retain the transcript
-        run: |
-          set -o pipefail
-          mkdir -p native-out/evidence
-          python3 -u packaging/native_ci.py build 2>&1 | tee native-out/evidence/build.log
-      - name: Install and test the package
-        run: |
-          sudo dpkg -i native-out/packages/*.deb
-          sh packaging/x11-tests.sh python3 packaging/native_ci.py verify --prefix /usr \
-            --tester build-qt/bin/helloneedle-gui-tests
-      - name: Preserve Ubuntu screenshots and logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: gui-evidence-ubuntu-24.04-x64-x11
-          path: native-out/evidence/
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
-        with:
-          name: helloneedle-ubuntu-24.04-x64
-          path: native-out/packages/
-          if-no-files-found: error
 
-  macos-intel:
-    name: macOS 15 Intel, native Cocoa and Universal installer
-    needs: source
-    runs-on: macos-15-intel
-    timeout-minutes: 150
-    outputs:
-      native_installer: ${{ steps.publish_native.outcome }}
-      universal_installer: ${{ steps.publish_universal.outcome }}
-    env:
-      QT_QPA_PLATFORM: cocoa
-      MAC_CPU: x86_64
-      MAC_TARGET: macos-15-x86_64
-      PRODUCT_VERSION: ${{ needs.source.outputs.version }}
-    steps: &mac_build_steps
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Install MacPorts dependencies
-        run: |
-          case "$(sw_vers -productVersion | cut -d. -f1)" in
-            15) installer=MacPorts-2.12.7-15-Sequoia.pkg
-                checksum=87b2e87ed7adc4aca947b42eb7ff991614cc0edfccb486237f2bbc75f28aae63 ;;
-            26) installer=MacPorts-2.12.7-26-Tahoe.pkg
-                checksum=588f14ccd3c6199559a070a80e6cddd6871721a08cc434775bf54378fd667910 ;;
-            *) echo 'A MacPorts installer for this release is required.' >&2; exit 1 ;;
-          esac
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/$installer" \
-            "https://github.com/macports/macports-base/releases/download/v2.12.7/$installer"
-          (cd "$RUNNER_TEMP" && echo "$checksum  $installer" | shasum -a 256 -c)
-          pkgutil --check-signature "$RUNNER_TEMP/$installer"
-          sudo installer -pkg "$RUNNER_TEMP/$installer" -target /
-          sudo /opt/local/bin/port -N install qt6-qtbase qt6-qttranslations poppler antiword ninja pkgconfig zstd lzip
-          printf '%s\n' /opt/local/bin >> "$GITHUB_PATH"
-          printf '%s\n' 'CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local' >> "$GITHUB_ENV"
-      - name: Build the application and retain the transcript
-        run: |
-          set -o pipefail
-          mkdir -p native-out/evidence
-          python3 -u packaging/native_ci.py build 2>&1 | tee native-out/evidence/build.log
-      - name: Extract, verify the signature, and test the application
-        run: |
-          mkdir -p "native-out/Installed Applications"
-          (cd native-out/packages && shasum -a 256 -c SHA256SUMS)
-          ditto -x -k native-out/packages/*.zip "native-out/Installed Applications"
-          codesign --verify --deep --strict "native-out/Installed Applications/Hello Needle.app"
-          python3 packaging/native_ci.py verify --prefix "native-out/Installed Applications" \
-            --tester build-qt/bin/helloneedle-gui-tests
-      - name: Preserve macOS screenshots and logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: gui-evidence-${{ env.MAC_TARGET }}-cocoa
-          path: native-out/evidence/
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
-        with:
-          name: helloneedle-${{ env.MAC_TARGET }}
-          path: native-out/packages/
-          if-no-files-found: error
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: helloneedle-source-checksum
-          path: native-out/source
-      - name: Deploy the native app, its complete runtime and matching sources
+      - name: Verify the Apple Silicon host and source revision
         run: |
           set -euo pipefail
-          test "$(uname -m)" = "$MAC_CPU"
-          mkdir -p native-out/installer-diagnostics
-          python3 -u packaging/macos/package.py build --app 'build-qt/package-root/Hello Needle.app' \
-            --work build-qt/macos-deploy --output native-out/macos-installer --sources native-out/macos-sources \
-            2>&1 | tee native-out/installer-diagnostics/native-deploy.log
-          stem="HelloNeedle-$PRODUCT_VERSION-macOS-$MAC_CPU"
-          python3 .github/scripts/installer_artifacts.py sources --source native-out/macos-sources \
-            --output "native-out/macos-runtime/$stem-Runtime-Sources.tar"
-          python3 .github/scripts/installer_artifacts.py manifest --installer "native-out/macos-installer/$stem.dmg" \
-            --output "native-out/macos-installer/$stem-SHA256SUMS" --checksums native-out/source/SHA256SUMS native-out/macos-runtime/SHA256SUMS
-          python3 -u packaging/macos/package.py install --image "native-out/macos-installer/$stem.dmg" \
-            --prefix "$RUNNER_TEMP/Native Installed Applications" 2>&1 | tee native-out/installer-diagnostics/native-install.log
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-macos-${{ env.MAC_CPU }}-runtime-sources
-          path: native-out/macos-runtime/
-          compression-level: 0
-          if-no-files-found: error
-      - id: publish_native
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-macos-${{ env.MAC_CPU }}-installer
-          path: |
-            native-out/macos-installer/*.dmg
-            native-out/macos-installer/*-SHA256SUMS
-          compression-level: 0
-          if-no-files-found: error
-      - name: Cross-build the Apple Silicon app from the same revision on Intel
-        # The installed-file manifest is enough to test the second architecture.
-        if: ${{ !cancelled() && env.MAC_CPU == 'x86_64' && hashFiles('build-qt/macos-deploy/runtime-manifest.json') != '' }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/hn-arm" native-out/installer-diagnostics
-          python3 -u packaging/macos/cross/prepare.py --build build-qt --intel-app 'build-qt/package-root/Hello Needle.app' \
-            --work "$RUNNER_TEMP/hn-apple-cross" --output "$RUNNER_TEMP/hn-arm/Hello Needle.app" \
-            2>&1 | tee native-out/installer-diagnostics/arm64-compile.log
-          sysroot="$RUNNER_TEMP/hn-apple-cross/sysroot"
-          export PKG_CONFIG_SYSROOT_DIR="$sysroot" PKG_CONFIG_LIBDIR="$sysroot/opt/local/lib/pkgconfig:$sysroot/opt/local/share/pkgconfig"
-          python3 -u packaging/macos/package.py build --app "$RUNNER_TEMP/hn-arm/Hello Needle.app" \
-            --arch arm64 --prefix "$sysroot/opt/local" --work build-qt/macos-deploy-arm \
-            --output native-out/cross-arm-installer --sources native-out/cross-arm-sources \
-            2>&1 | tee native-out/installer-diagnostics/arm64-deploy.log
-      - name: Merge both complete architectures and create the Universal disk image
-        if: env.MAC_CPU == 'x86_64'
-        run: |
-          set -euo pipefail
-          stem="HelloNeedle-$PRODUCT_VERSION-macOS"
-          python3 -u packaging/macos/package.py universal --arm "native-out/cross-arm-installer/$stem-arm64.dmg" \
-            --intel "native-out/macos-installer/$stem-x86_64.dmg" --output native-out/universal-installer \
-            2>&1 | tee native-out/installer-diagnostics/universal.log
-          python3 .github/scripts/installer_artifacts.py sources --source native-out/cross-arm-sources \
-            --output "native-out/universal-arm-runtime/$stem-Universal-arm64-Runtime-Sources.tar"
-          python3 .github/scripts/installer_artifacts.py manifest --installer "native-out/universal-installer/$stem-Universal.dmg" \
-            --output "native-out/universal-installer/$stem-Universal-SHA256SUMS" --checksums native-out/source/SHA256SUMS \
-            native-out/macos-runtime/SHA256SUMS native-out/universal-arm-runtime/SHA256SUMS
-      - if: env.MAC_CPU == 'x86_64'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-macos-universal-arm64-runtime-sources
-          path: native-out/universal-arm-runtime/
-          compression-level: 0
-          if-no-files-found: error
-      - id: publish_universal
-        if: env.MAC_CPU == 'x86_64'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-macos-universal-installer
-          path: |
-            native-out/universal-installer/*.dmg
-            native-out/universal-installer/*-SHA256SUMS
-          compression-level: 0
-          if-no-files-found: error
-      - name: Preserve macOS packaging logs and runtime inventories on failure
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: macos-packaging-diagnostics-${{ env.MAC_CPU }}
-          path: |
-            native-out/installer-diagnostics/*.log
-            build-qt/macos-deploy*/runtime-manifest.json
-            native-out/macos-sources/RUNTIME-SOURCES.json
-            native-out/cross-arm-sources/RUNTIME-SOURCES.json
-          if-no-files-found: ignore
+          mkdir -p evidence installer
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          sw_vers | tee evidence/host.txt
+          uname -m | tee -a evidence/host.txt
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 15
 
-  macos-arm:
-    name: macOS 26 Apple Silicon, native Cocoa and installer
-    needs: source
-    runs-on: macos-26
-    timeout-minutes: 100
-    outputs:
-      native_installer: ${{ steps.publish_native.outcome }}
-    env:
-      QT_QPA_PLATFORM: cocoa
-      MAC_CPU: arm64
-      MAC_TARGET: macos-26-arm64
-      PRODUCT_VERSION: ${{ needs.source.outputs.version }}
-    steps: *mac_build_steps
-
-  macos-install-intel:
-    name: Install and open the downloaded disk images on a clean Intel Mac
-    needs: [source, macos-intel]
-    if: ${{ !cancelled() && needs.macos-intel.outputs.native_installer == 'success' }}
-    runs-on: macos-15-intel
-    timeout-minutes: 25
-    outputs:
-      native_test: ${{ steps.native_test.outcome }}
-      universal_test: ${{ steps.universal_test.outcome }}
-    env:
-      PRODUCT_VERSION: ${{ needs.source.outputs.version }}
-      MAC_CPU: x86_64
-      TEST_NATIVE: 'true'
-      TEST_UNIVERSAL: ${{ needs.macos-intel.outputs.universal_installer == 'success' }}
-    steps: &mac_clean_steps
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - if: env.TEST_NATIVE == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: helloneedle-macos-${{ env.MAC_CPU }}-installer
-          path: native-out/installer
-      - if: env.TEST_UNIVERSAL == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: helloneedle-macos-universal-installer
-          path: native-out/universal
-      - id: native_test
-        name: Mount, install and run the native app without installing MacPorts
-        if: env.TEST_NATIVE == 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p native-out/installer-evidence
-          base="native-out/installer/HelloNeedle-$PRODUCT_VERSION-macOS-$MAC_CPU"
-          python3 .github/scripts/installer_artifacts.py verify --installer "$base.dmg" --checksums "$base-SHA256SUMS"
-          python3 -u packaging/macos/package.py install --image "$base.dmg" --prefix "$RUNNER_TEMP/Native Applications" \
-            --evidence native-out/installer-evidence/native-documents.json \
-            2>&1 | tee native-out/installer-evidence/native-install.log
-      - id: universal_test
-        name: Mount, install and run the Universal app without installing MacPorts
-        if: ${{ !cancelled() && env.TEST_UNIVERSAL == 'true' }}
-        run: |
-          set -euo pipefail
-          mkdir -p native-out/installer-evidence
-          base="native-out/universal/HelloNeedle-$PRODUCT_VERSION-macOS-Universal"
-          python3 .github/scripts/installer_artifacts.py verify --installer "$base.dmg" --checksums "$base-SHA256SUMS"
-          python3 -u packaging/macos/package.py install --image "$base.dmg" --prefix "$RUNNER_TEMP/Universal Applications" \
-            --evidence native-out/installer-evidence/universal-documents.json \
-            2>&1 | tee native-out/installer-evidence/universal-install.log
-      - name: Preserve clean macOS installation evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: installer-evidence-macos-${{ env.MAC_CPU }}
-          path: native-out/installer-evidence/
-          if-no-files-found: warn
-
-  macos-install-arm:
-    name: Install and open the Universal disk image on a clean Apple Silicon Mac
-    needs: [source, macos-intel]
-    if: ${{ !cancelled() && needs.macos-intel.outputs.universal_installer == 'success' }}
-    runs-on: macos-26
-    timeout-minutes: 25
-    env:
-      PRODUCT_VERSION: ${{ needs.source.outputs.version }}
-      MAC_CPU: arm64
-      TEST_NATIVE: 'false'
-      TEST_UNIVERSAL: 'true'
-    steps: *mac_clean_steps
-
-  freebsd:
-    name: FreeBSD 15.1 amd64, pkg and native X11
-    needs: source
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
-        with:
-          release: '15.1'
-          arch: x86_64
-          mem: '8192'
-          sync: rsync
-          copyback: 'true'
-          envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA CARGO_BUILD_JOBS'
-          prepare: |
-            set -eu
-            pkg install -y git cmake ninja rust qt6-base qt6-translations poppler-utils antiword python3 \
-              xorg-vfbserver openbox dbus dejavu
-            dbus-uuidgen --ensure
-          run: |
-            set -eu
-            resultdir=$PWD
-            pw useradd -n hnbuild -m -s /bin/sh
-            cd /home/hnbuild
-            su hnbuild -c 'git clone --no-checkout "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" source'
-            cd source
-            su hnbuild -c 'git fetch origin "$GITHUB_SHA" && git checkout --detach "$GITHUB_SHA"'
-            result=0
-            su hnbuild -c 'set -eu -o pipefail; mkdir -p native-out/evidence;
-              python3 -u packaging/native_ci.py build 2>&1 | tee native-out/evidence/build.log' || result=$?
-            if [ "$result" -eq 0 ]; then
-              pkg add native-out/packages/*.pkg || result=$?
-            fi
-            if [ "$result" -eq 0 ]; then
-              su hnbuild -c 'sh packaging/x11-tests.sh python3 packaging/native_ci.py verify \
-                --prefix /usr/local --tester build-qt/bin/helloneedle-gui-tests' || result=$?
-            fi
-            # The VM action copies the workspace back after its script succeeds.
-            # Carry the original test status and any partial evidence to the host.
-            mkdir -p "$resultdir/native-out"
-            if [ -d native-out ]; then cp -R native-out/. "$resultdir/native-out/"; fi
-            printf '%s\n' "$result" > "$resultdir/native-out/freebsd-status"
-      - name: Check the VM's build and test status
-        run: test "$(cat native-out/freebsd-status)" = 0
-      - name: Preserve FreeBSD screenshots and logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: gui-evidence-freebsd-15.1-amd64-x11
-          path: native-out/evidence/
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
-        with:
-          name: helloneedle-freebsd-15.1-amd64
-          path: native-out/packages/
-          if-no-files-found: error
-
-  windows:
-    name: Build Windows x64 with UCRT64
-    needs: source
-    runs-on: windows-2025
-    timeout-minutes: 100
-    env:
-      PRODUCT_VERSION: ${{ needs.source.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            git tar zstd lzip curl mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-translations
-            mingw-w64-ucrt-x86_64-python
-            mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-poppler-data mingw-w64-ucrt-x86_64-antiword
-      - name: Record antiword behavior for Windows paths
-        shell: msys2 {0}
-        run: |
-          mkdir -p native-out/evidence
-          python3 - <<'PY' | tee native-out/evidence/word-decoder-paths.log
-          from pathlib import Path, PureWindowsPath
-          import os, shutil, subprocess
-          fixture = Path('tests/desktop/fixtures/sample.doc').resolve()
-          filename = str(PureWindowsPath(fixture))
-          maps = Path(shutil.which('antiword')).parent.parent / 'share' / 'antiword'
-          probes = [('Win32', filename, None, os.environ), ('extended-length', '\\\\?\\' + filename, None, os.environ),
-                    ('relative with maps', '.\\' + fixture.name, fixture.parent, {**os.environ, 'ANTIWORDHOME': str(maps)})]
-          for kind, path, cwd, env in probes:
-              result = subprocess.run(['antiword', '-t', '-w', '0', '-m', 'UTF-8.txt', path],
-                                      cwd=cwd, env=env, capture_output=True)
-              diagnostic = result.stderr.decode(errors='replace').splitlines()
-              print(kind, 'exit', result.returncode, 'fixture text', b'Needle in the margin' in result.stdout,
-                    'message', diagnostic[0] if diagnostic else '')
-          PY
-      - name: Build the application and retain the transcript
-        shell: msys2 {0}
-        run: |
-          set -eo pipefail
-          mkdir -p native-out/evidence
-          python3 -u packaging/native_ci.py build 2>&1 | tee native-out/evidence/build.log
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: helloneedle-source-checksum
-          path: native-out/source
-      - name: Create the self-contained Windows installer and its corresponding sources
-        shell: msys2 {0}
-        run: |
-          set -euo pipefail
-          mkdir -p native-out/evidence native-out/qa-driver
-          python3 -u packaging/windows/installer.py --stage build-qt/package-root \
-            --icon build-qt/icons/helloneedle.ico --output native-out/windows-installer \
-            2>&1 | tee native-out/evidence/installer-build.log
-          (cd native-out/windows-installer && sha256sum -c SHA256SUMS)
-          base="native-out/windows-installer/HelloNeedle-$PRODUCT_VERSION-Windows-x64"
-          python3 .github/scripts/installer_artifacts.py manifest --installer "$base-Setup.exe" \
-            --output "$base-SHA256SUMS" --checksums native-out/source/SHA256SUMS native-out/windows-installer/SHA256SUMS
-          cp build-qt/bin/helloneedle-gui-tests.exe /ucrt64/bin/Qt6Test.dll native-out/qa-driver/
-      - name: Preserve the Windows build transcript
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-windows-build-log
-          path: native-out/evidence/
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
-        with:
-          name: helloneedle-windows-x64-ucrt
-          path: native-out/packages/
-          compression-level: 0
-          if-no-files-found: error
-      - name: Preserve the native test driver for desktop checks
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-windows-x64-test-driver
-          path: native-out/qa-driver/
-          if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-windows-installer
-          path: |
-            native-out/windows-installer/*-Setup.exe
-            native-out/windows-installer/*-SHA256SUMS
-          compression-level: 0
-          if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: helloneedle-windows-runtime-sources
-          path: native-out/windows-installer/*-Runtime-Sources.zip
-          compression-level: 0
-          if-no-files-found: error
-
-  windows-desktop:
-    name: Windows GUI on ${{ matrix.os }}
-    needs: [source, windows]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2025, windows-11-arm]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
-    env:
-      QT_QPA_PLATFORM: windows
-      PRODUCT_VERSION: ${{ needs.source.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: helloneedle-windows-x64-ucrt
-          path: native-out/packages
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: helloneedle-windows-x64-test-driver
-          path: native-out/driver
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: helloneedle-windows-installer
-          path: native-out/installer
-      - name: Install and test on a clean Windows desktop before setting up MSYS2
-        shell: pwsh
-        run: |
-          $name = "HelloNeedle-$env:PRODUCT_VERSION-Windows-x64"
-          $setup = Get-Item "native-out/installer/$name-Setup.exe"
-          $actual = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
-          $sums = Get-Content -LiteralPath "native-out/installer/$name-SHA256SUMS"
-          if ($sums -cnotcontains ("$actual  " + $setup.Name)) { throw 'Installer checksum mismatch.' }
-          $python = (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source
-          & ./tests/installer/verify-windows.ps1 -Installer $setup.FullName -ExpectedVersion $env:PRODUCT_VERSION `
-            -Python $python -GuiTester (Resolve-Path native-out/driver/helloneedle-gui-tests.exe) `
-            -EvidenceDirectory "$pwd/native-out/installed-evidence"
-      - name: Preserve Windows installer acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: installer-evidence-${{ matrix.os }}
-          path: native-out/installed-evidence/
-          if-no-files-found: warn
-      - uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c
-        with:
-          # Both jobs run exactly the same x64 application and Qt binaries.
-          msystem: UCRT64
-          update: true
-          install: >-
-            git mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-translations mingw-w64-ucrt-x86_64-python
-            mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-antiword
-      - name: Extract and test the shipped x64 executables on the Windows desktop
-        shell: msys2 {0}
-        run: |
-          set -eu
-          (cd native-out/packages && sha256sum -c SHA256SUMS)
-          python3 -m zipfile -e native-out/packages/*.zip "native-out/Installed Application"
-          python3 packaging/native_ci.py verify --prefix "native-out/Installed Application" \
-            --tester native-out/driver/helloneedle-gui-tests.exe
-      - name: Preserve Windows screenshots and logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: gui-evidence-${{ matrix.os }}-x64-application
-          path: native-out/evidence/
-          if-no-files-found: warn
-
-  attest-windows:
-    name: Attest the tested Windows installer and source checksums
-    needs: [source, windows-desktop]
-    if: >-
-      ${{ github.repository == 'AlfredoLlaquet/helloneedle' &&
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/hello-needle-installers' ||
-           startsWith(github.ref, 'refs/heads/release/v') || startsWith(github.ref, 'refs/tags/v')) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions: &installer_signing
-      contents: read
-      attestations: write
-      id-token: write
-    env:
-      INSTALLER_ARTIFACT: helloneedle-windows-installer
-      PROOF_ARTIFACT: helloneedle-windows-provenance
-      FILE_STEM: HelloNeedle-${{ needs.source.outputs.version }}-Windows-x64
-      INSTALLER_SUFFIX: -Setup.exe
-    steps: &installer_attestation
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: ${{ env.INSTALLER_ARTIFACT }}
-          path: payload
-      - name: Check the exact installer and checksum list from the installation tests
-        working-directory: payload
-        run: |
-          python3 - <<'PY'
-          import hashlib
-          import os
-          from pathlib import Path
-          import re
-
-          stem = os.environ["FILE_STEM"]
-          installer = Path(stem + os.environ["INSTALLER_SUFFIX"])
-          manifest = Path(stem + "-SHA256SUMS")
-          expected = {installer, manifest}
-          if set(Path(".").iterdir()) != expected or any(p.is_symlink() or not p.is_file() for p in expected):
-              raise SystemExit("The installer artifact must contain exactly the expected installer and checksum list.")
-          entries = {}
-          for line in manifest.read_text(encoding="ascii").splitlines():
-              match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9_.+-]*)", line)
-              if not match or match[2] in entries:
-                  raise SystemExit("Malformed or duplicate filename in the installer checksum list.")
-              entries[match[2]] = match[1]
-          with installer.open("rb") as stream:
-              actual = hashlib.file_digest(stream, "sha256").hexdigest()
-          if entries.get(installer.name) != actual:
-              raise SystemExit("The installer bytes differ from the recorded checksum for its exact filename.")
-          PY
-      - id: attest
-        name: Generate GitHub build provenance for both files
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            payload/${{ env.FILE_STEM }}${{ env.INSTALLER_SUFFIX }}
-            payload/${{ env.FILE_STEM }}-SHA256SUMS
-          create-storage-record: false
-      - name: Verify both subjects against the build revision and save the proof
+      - name: Find and verify the producer's artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          SIGSTORE_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
-          mkdir proof
-          cp -- "$SIGSTORE_BUNDLE" "proof/$FILE_STEM.sigstore.json"
-          cp -- "payload/$FILE_STEM-SHA256SUMS" proof/
-          for subject in "payload/$FILE_STEM$INSTALLER_SUFFIX" "payload/$FILE_STEM-SHA256SUMS"; do
-            gh attestation verify "$subject" --repo "$GITHUB_REPOSITORY" --bundle "proof/$FILE_STEM.sigstore.json" \
-              --source-digest "$GITHUB_SHA" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/helloneedle.yml"
+          api="repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN"
+          gh api "$api" > evidence/source-run.json
+          jq -e --arg sha "$SOURCE_SHA" --arg repo "$GITHUB_REPOSITORY" --argjson id "$SOURCE_RUN" '
+            .id == $id and .head_sha == $sha and .head_branch == "hello-needle-installers"
+            and .event == "push" and .path == ".github/workflows/helloneedle.yml"
+            and .repository.full_name == $repo and .head_repository.full_name == $repo
+          ' evidence/source-run.json >/dev/null
+          for ((attempt=1; attempt<=45; attempt++)); do
+            gh api "$api/artifacts?per_page=100" --jq ".artifacts[] | select(.name == \"$ARTIFACT_NAME\")" > evidence/artifact.json
+            if test -s evidence/artifact.json; then break; fi
+            producer=$(gh api "$api/jobs?per_page=100" --jq '.jobs[] | select(.name == "macOS 15 Intel, native Cocoa and Universal installer") | .status')
+            if test "$producer" = completed; then echo "Producer finished without the Universal artifact" >&2; exit 1; fi
+            sleep 60
           done
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ${{ env.PROOF_ARTIFACT }}
-          path: proof/
-          if-no-files-found: error
+          jq -se --arg sha "$SOURCE_SHA" --arg name "$ARTIFACT_NAME" --argjson run "$SOURCE_RUN" '
+            length == 1 and (.[0] | .name == $name and .expired == false and .size_in_bytes > 0
+              and .workflow_run.id == $run and .workflow_run.head_sha == $sha
+              and (.digest | test("^sha256:[0-9a-f]{64}$")))
+          ' evidence/artifact.json >/dev/null
+          id=$(jq -r .id evidence/artifact.json)
+          digest=$(jq -r '.digest | sub("^sha256:";"")' evidence/artifact.json)
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/Universal.zip"
+          echo "$digest  $RUNNER_TEMP/Universal.zip" | shasum -a 256 -c
+          python3 - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          stem = os.environ["STEM"]
+          with zipfile.ZipFile(Path(os.environ["RUNNER_TEMP"]) / "Universal.zip") as archive:
+              if sorted(archive.namelist()) != [stem + "-SHA256SUMS", stem + ".dmg"]:
+                  raise SystemExit("Unexpected files in the Universal installer artifact")
+              archive.extractall("installer")
+          PY
+          python3 .github/scripts/installer_artifacts.py verify --installer "installer/$STEM.dmg" --checksums "installer/$STEM-SHA256SUMS"
+          grep -Eq "^[0-9a-f]{64}  helloneedle-1[.]0[.]0-source-${SOURCE_SHA}[.]tar[.]gz$" "installer/$STEM-SHA256SUMS"
+          cp "installer/$STEM-SHA256SUMS" evidence/
 
-  attest-macos-universal:
-    name: Attest the tested Universal macOS installer and source checksums
-    needs: [source, macos-install-intel]
-    if: >-
-      ${{ !cancelled() && needs.macos-install-intel.outputs.universal_test == 'success' &&
-          github.repository == 'AlfredoLlaquet/helloneedle' &&
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/hello-needle-installers' ||
-           startsWith(github.ref, 'refs/heads/release/v') || startsWith(github.ref, 'refs/tags/v')) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions: *installer_signing
-    env:
-      INSTALLER_ARTIFACT: helloneedle-macos-universal-installer
-      PROOF_ARTIFACT: helloneedle-macos-universal-provenance
-      FILE_STEM: HelloNeedle-${{ needs.source.outputs.version }}-macOS-Universal
-      INSTALLER_SUFFIX: .dmg
-    steps: *installer_attestation
+      - name: Install, detach the disk image, and test the native application
+        run: |
+          set -euo pipefail
+          destination="$RUNNER_TEMP/Universal Applications"
+          python3 -u packaging/macos/package.py install --image "installer/$STEM.dmg" --prefix "$destination" \
+            --evidence evidence/documents.json 2>&1 | tee evidence/install.log
+          app="$destination/Hello Needle.app"
+          lipo "$app/Contents/MacOS/helloneedle" -verify_arch arm64 x86_64
+          lipo -archs "$app/Contents/MacOS/helloneedle" | tee evidence/architectures.txt
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = 1.0.0
+          for cpu in arm64 x86_64; do
+            receipt="$app/Contents/Resources/licenses/architectures/$cpu/BUILD-ENVIRONMENT.json"
+            jq -e --arg sha "$SOURCE_SHA" --arg cpu "$cpu" '.commit == $sha and .machine == $cpu and .version == "1.0.0"' "$receipt"
+            cp "$receipt" "evidence/build-$cpu.json"
+          done
+
+      - name: Retain installer evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: clean-macos-15-arm64-universal-45279043342
+          path: evidence/
+          if-no-files-found: warn
