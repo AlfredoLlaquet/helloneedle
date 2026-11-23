@@ -18,6 +18,7 @@ This practice comes from Crumb Writer’s rule to keep its detailed manual synch
 | November 23, 2026 | Limited the application interface to **English and Spanish**. English supplies original and fallback text. Spanish regional locales select Spanish. The desktop Language menu can override the system selection. Neither language choice filters document content. |
 | November 23, 2026 | Adopted Alfredo’s icon design, the face of an astonished cow. The transparent master is `desktop/qt/helloneedle.png`. Use it for the running window, Linux and FreeBSD application menus, Windows Explorer, and the macOS Finder and Dock. Keep its ears, horns and open mouth inside the frame. |
 | November 23, 2026 | Required a native GUI appearance audit on all four platforms. A clean first launch receives particular attention because Crumb Writer exhibited platform-specific problems with icons, dark menus, and input fields. Inspect actual images in addition to contrast and geometry measurements. |
+| November 23, 2026 | Alfredo requested standalone installers with Crumb Writer’s GitHub build provenance. The Windows product is an Inno Setup executable for the current account. The Mac product is a universal drag-to-Applications disk image. Both include the document runtime and source companions. |
 
 Development, issues, and packages belong in Alfredo’s repository. The fork points back to Clapgrep. Review any adopted changes individually and preserve their authorship. Contacting an upstream maintainer or submitting a patch upstream requires a separate instruction from Alfredo. Discussion-only messages and messages introduced with “Question:” ask for an answer without repository changes.
 
@@ -53,6 +54,7 @@ Inputs have a 64 MiB limit and extracted text has a 32 MiB limit. Readers also b
 | Path | Responsibility |
 | --- | --- |
 | `bridge/src/main.rs`, `lib.rs`, `protocol.rs`, `paths.rs` | Rust worker entry points, file revisions, request validation, path identity, limits, results, and preview context. |
+| `bridge/src/converters.rs`, `desktop/qt/runtime.cpp` | Locate the installed helpers and their font and character-map data, including when the desktop supplies a system-only environment. |
 | `bridge/src/search.rs` | Ignore rules, folder traversal, regular expression/literal matching, filename and path options, excerpts and UTF-16 match indices. |
 | `bridge/src/documents/` | Text decoding and lines, HTML and Markdown projection, Poppler PDF extraction and geometry. |
 | `bridge/src/office.rs`, `bridge/src/office/` | Shared Office block model, package limits, OOXML, ODF, RTF, and legacy binary Word adapters. |

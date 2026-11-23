@@ -9,7 +9,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 
-from .common import Notices, archive_kind, digest, download, notice_name, safe_name
+from .common import Notices, digest, download, notice_name, safe_name
 
 
 def fields(path):
@@ -86,13 +86,13 @@ def signed_source_inputs(key, metadata, members):
         raise RuntimeError(f"Source package {identity} does not match installed {key}")
     directory = PurePosixPath(path).parent
     shipped = {str(PurePosixPath(m).relative_to(directory)).split("/", 1)[0] for m in members}
-    sources = sorted({s for k, vs in values.items() if k == "source" or k.startswith("source_") for s in vs})
+    sources = sorted({s for k in ("source", "source_any", "source_x86_64", "source_ucrt64") for s in values.get(k, [])})
     for source in sources:
         alias, sep, url = source.partition("::")
         if sep:
             filename = alias
         else:
-            filename = PurePosixPath(urllib.parse.urlsplit(source).path).name
+            filename = urllib.parse.unquote(PurePosixPath(urllib.parse.urlsplit(source).path).name)
         if filename not in shipped and filename.removesuffix(".git") not in shipped:
             raise RuntimeError(f"Signed all-source package {key} is missing its declared input {source}")
     return sources

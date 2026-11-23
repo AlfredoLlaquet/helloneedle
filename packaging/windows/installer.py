@@ -143,6 +143,9 @@ def build(stage, icon, output, prefix):
         subprocess.run([sys.executable, ROOT / "tools/runtime_sources.py", "--platform", "msys2",
                         "--manifest", runtime_files, "--stage", payload, "--notices", notices,
                         "--output", source_dir], check=True)
+        for required in (notices / "PACKAGES.json", source_dir / "RUNTIME-SOURCES.json", source_dir / "SHA256SUMS"):
+            if not required.is_file():
+                raise FileNotFoundError(required)
         engine_notice = notices / "InnoSetup/LICENSE.txt"
         engine_notice.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(compiler.parent / "license.txt", engine_notice)

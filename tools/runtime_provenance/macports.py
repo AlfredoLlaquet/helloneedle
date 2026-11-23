@@ -1,7 +1,6 @@
 """Resolve active MacPorts receipts, original Portfiles and checksum-verified distfiles."""
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import hashlib
 import os
 import re
 import shutil

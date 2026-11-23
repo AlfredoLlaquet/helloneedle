@@ -130,6 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True, help="finished native CMake/Ninja build")
     parser.add_argument("--intel-app", type=Path, required=True, help="original installed application skeleton")
+    parser.add_argument("--runtime-manifest", type=Path, help="native macOS runtime file manifest")
     parser.add_argument("--work", type=Path, required=True, help="new private cross-build directory")
     parser.add_argument("--output", type=Path, required=True, help="new arm64 application skeleton")
     args = parser.parse_args()
@@ -142,7 +143,8 @@ def main():
     darwin = platform.release().split(".")[0]
     deployment = platform.mac_ver()[0].split(".")[0] + ".0"
     work.mkdir(parents=True)
-    prefix = stage(work, darwin)
+    manifest = args.runtime_manifest or build / "macos-deploy/runtime-manifest.json"
+    prefix = stage(work, darwin, manifest)
     target_names = ["helloneedle", "helloneedle-gui-tests"]
     cross_cpp(build, prefix, work, target_names, deployment)
 

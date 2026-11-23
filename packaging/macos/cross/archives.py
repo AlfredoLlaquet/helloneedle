@@ -6,14 +6,15 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
-import sqlite3
 import subprocess
+import sys
 import tarfile
 from urllib.parse import quote
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
+from runtime_provenance.macports import records
 
 HOST_PREFIX = Path("/opt/local")
-ROOT_PORTS = ("qt6-qtbase", "qt6-qttranslations", "poppler", "antiword")
 MIRRORS = ("https://packages.macports.org", "https://fra.de.packages.macports.org")
 
 
@@ -25,31 +26,31 @@ def digest(path):
     return result.hexdigest()
 
 
-def active_packages(registry, roots):
-    """Read the exact activated versions and their recorded runtime dependencies."""
-    db = sqlite3.connect(registry.as_uri() + "?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    # MacPorts's registry declares this collation; only exact names are queried.
-    db.create_collation("VERSION", lambda a, b: (a > b) - (a < b))
-    packages = {}
-    pending = list(roots)
-    try:
-        while pending:
-            name = pending.pop()
-            if name in packages:
-                continue
-            rows = db.execute(
-                "SELECT id,name,epoch,version,revision,variants,archs,os_major,location "
-                "FROM ports WHERE name=? AND state='installed'", (name,)).fetchall()
-            if len(rows) != 1:
-                raise ValueError(f"Expected one active MacPorts receipt for {name}: {len(rows)}")
-            package = dict(rows[0])
-            packages[name] = package
-            pending.extend(row[0] for row in db.execute(
-                "SELECT name FROM dependencies WHERE id=?", (package["id"],)))
-    finally:
-        db.close()
-    return packages
+def sdk_packages(manifest):
+    """Start with the files actually deployed on Intel, plus the PDF build interfaces."""
+    origins = {row["source"] for row in json.loads(manifest.read_text())}
+    # A pkg-config interface can need other .pc files for its compile flags
+    # without adding a dylib to the installed app. Resolve those interfaces too.
+    env = dict(os.environ, PKG_CONFIG_PATH="", PKG_CONFIG_LIBDIR=os.pathsep.join(
+        str(HOST_PREFIX / path) for path in ("lib/pkgconfig", "share/pkgconfig")))
+    pkg = shutil.which("pkg-config") or "pkgconf"
+    remaining = ["fontconfig", "freetype2", "libpng", "libjpeg", "libopenjp2", "lcms2", "libtiff-4", "zlib"]
+    visited = set()
+    while remaining:
+        name = remaining.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        query = subprocess.run([pkg, "--variable=pcfiledir", name], env=env, stdout=subprocess.PIPE, text=True)
+        if query.returncode or not query.stdout.strip():
+            continue
+        pcfile = (Path(query.stdout.strip()) / (name + ".pc")).resolve(strict=True)
+        pcfile.relative_to(HOST_PREFIX)
+        origins.add(str(pcfile))
+        dependencies = subprocess.check_output([pkg, "--print-requires", "--print-requires-private", name],
+                                               env=env, text=True)
+        remaining.extend(line.split()[0] for line in dependencies.splitlines() if line.strip())
+    return records(HOST_PREFIX, {path: {"source": path} for path in sorted(origins)})
 
 
 def filenames(receipt, arch, darwin):
@@ -163,15 +164,15 @@ def unpack(archive, prefix, receipt, arch):
     return ownership
 
 
-def stage(work, darwin):
+def stage(work, darwin, manifest):
     sysroot = work / "sysroot"
     prefix = sysroot / "opt/local"
     cache = work / "downloads"
     cache.mkdir()
     prefix.mkdir(parents=True)
-    packages = active_packages(HOST_PREFIX / "var/macports/registry/registry.db", ROOT_PORTS)
     origins = {"archives": {}, "paths": {}}
-    for name, receipt in sorted(packages.items()):
+    for receipt in sdk_packages(manifest):
+        name = receipt["name"]
         print(f"Resolving signed Apple Silicon MacPorts archive for {name}", flush=True)
         archive, url, key = verified_archive(receipt, "arm64", darwin, cache)
         origins["archives"][name] = {"url": url, "sha256": digest(archive), "signingKey": key}

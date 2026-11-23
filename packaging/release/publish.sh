@@ -23,13 +23,25 @@ if [[ -z $release ]]; then
     release=$(gh release view "$tag" --json databaseId,isDraft,targetCommitish |
         jq '{id:.databaseId,draft:.isDraft,target_commitish:.targetCommitish}')
 fi
-[[ $(jq -r .target_commitish <<< "$release") == "$GITHUB_SHA" ]] || { echo 'A release already points elsewhere.' >&2; exit 1; }
+draft=$(jq -r .draft <<< "$release")
+if [[ $draft == true ]]; then
+    [[ $(jq -r .target_commitish <<< "$release") == "$GITHUB_SHA" ]] || { echo 'This draft points to another commit.' >&2; exit 1; }
+else
+    [[ -n $ref && $PUBLISH == true ]] || { echo 'This version has already been published.' >&2; exit 1; }
+    # Sigstore generates a fresh signing time on each run. Verify the original published receipt on a retry.
+    receipt="HelloNeedle-$VERSION-Release.sigstore.json"
+    previous=$(mktemp -d)
+    gh release download "$tag" --pattern "$receipt" --dir "$previous"
+    gh attestation verify SHA256SUMS --repo "$GH_REPO" --bundle "$previous/$receipt" \
+        --source-digest "$GITHUB_SHA" --signer-workflow "$GH_REPO/.github/workflows/installers-release.yml"
+    cp -- "$previous/$receipt" "$receipt"
+fi
 release_id=$(jq -er .id <<< "$release")
 asset_digests() {
     gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" | jq -scr '.[][] | [.name,.digest] | @tsv' | sort
 }
 local_digests=$(for path in *; do printf '%s\tsha256:%s\n' "$path" "$(sha256sum "$path" | cut -d' ' -f1)"; done | sort)
-if [[ $(jq -r .draft <<< "$release") == true ]]; then
+if [[ $draft == true ]]; then
     gh release upload "$tag" ./* --clobber
     [[ $(asset_digests) == "$local_digests" ]] || { echo 'Draft assets differ from verified local bytes.' >&2; exit 1; }
     if [[ $PUBLISH == true ]]; then gh release edit "$tag" --draft=false --latest; fi

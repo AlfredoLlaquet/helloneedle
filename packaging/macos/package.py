@@ -75,7 +75,7 @@ def build(args):
     run("ditto", original, stage)
     docs = stage / "Contents/Resources/licenses"
     notices = docs / "LICENSES/native"
-    tools = poppler.build(deploy, sources, notices, prefix, arch)
+    tools = poppler.build(deploy, sources, docs / "LICENSES", prefix, arch)
     manifest = deploy / "runtime-manifest.json"
     package = Bundle(stage, prefix, arch)
     package.deploy(manifest, tools)
@@ -103,12 +103,12 @@ def build(args):
         "name": poppler_component, "installed": ["Contents/MacOS/pdftotext", "Contents/MacOS/pdftoppm"],
         "sourceDirectory": str(sources / poppler_component), "license": "GPL-2.0-or-later",
     }], indent=2) + "\n", encoding="utf-8")
-    run(sys.executable, ROOT / "tools/runtime_sources.py", "--platform", "macports",
-        "--manifest", manifest, "--derived-manifest", derived, "--stage", stage, "--notices", notices, "--output", sources)
     imports = json.dumps(package.system_imports, sort_keys=True, indent=2) + "\n"
-    (notices / "APPLE-SYSTEM-IMPORTS.json").write_text(imports, encoding="utf-8")
     (sources / f"apple-system-imports-{arch}.json").write_text(imports, encoding="utf-8")
     shutil.copy2(manifest, sources / f"runtime-manifest-{arch}.json")
+    run(sys.executable, ROOT / "tools/runtime_sources.py", "--platform", "macports",
+        "--manifest", manifest, "--derived-manifest", derived, "--stage", stage, "--notices", notices, "--output", sources)
+    (notices / "APPLE-SYSTEM-IMPORTS.json").write_text(imports, encoding="utf-8")
     shutil.copy2(manifest, notices / "RUNTIME-FILES.json")
     sign(stage)
     verify(stage, (arch,))

@@ -147,7 +147,8 @@ class Notices:
                     if not item.isfile():
                         continue
                     names.add(item.name)
-                    if metadata is not None and PurePosixPath(item.name).name == ".SRCINFO" and item.size < CHUNK:
+                    member_path = PurePosixPath(item.name)
+                    if metadata is not None and member_path.name == ".SRCINFO" and len(member_path.parts) <= 2 and item.size < CHUNK:
                         metadata[item.name] = archive.extractfile(item).read().decode("utf-8")
                     elif notice_name(item.name) and item.size < 16 * CHUNK:
                         self.add(origin + item.name, archive.extractfile(item).read())
@@ -181,11 +182,12 @@ def manifest_files(manifest, stage, derived=()):
         if key in found:
             raise ValueError(f"Duplicate staged runtime origin: {key}")
         record = {"installed": key, "source": str(source), "preInstallerSha256": digest(staged)}
-        for field in ("originSha256", "archive"):
+        for field in ("originSha256", "archive", "archiveSha256"):
             if field in entry:
                 record[field] = entry[field]
-        if "originSha256" in record and not re.fullmatch("[0-9a-f]{64}", record["originSha256"]):
-            raise ValueError(f"Invalid original package digest for {key}")
+        for field in ("originSha256", "archiveSha256"):
+            if field in record and not re.fullmatch("[0-9a-f]{64}", record[field]):
+                raise ValueError(f"Invalid original package digest for {key}")
         found[key] = record
     for path in stage.rglob("*"):
         if path.is_symlink() or not path.is_file():

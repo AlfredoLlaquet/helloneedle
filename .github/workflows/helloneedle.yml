@@ -181,7 +181,6 @@ jobs:
         if: env.MAC_CPU == 'x86_64'
         run: |
           set -euo pipefail
-          rustup target add aarch64-apple-darwin
           mkdir -p "$RUNNER_TEMP/hn-arm"
           python3 packaging/macos/cross/prepare.py --build build-qt --intel-app 'build-qt/package-root/Hello Needle.app' \
             --work "$RUNNER_TEMP/hn-apple-cross" --output "$RUNNER_TEMP/hn-arm/Hello Needle.app"
@@ -271,6 +270,7 @@ jobs:
           base="native-out/installer/HelloNeedle-$PRODUCT_VERSION-macOS-$MAC_CPU"
           python3 .github/scripts/installer_artifacts.py verify --installer "$base.dmg" --checksums "$base-SHA256SUMS"
           python3 -u packaging/macos/package.py install --image "$base.dmg" --prefix "$RUNNER_TEMP/Native Applications" \
+            --evidence native-out/installer-evidence/native-documents.json \
             2>&1 | tee native-out/installer-evidence/native-install.log
       - id: universal_test
         name: Mount, install and run the Universal app without installing MacPorts
@@ -281,6 +281,7 @@ jobs:
           base="native-out/universal/HelloNeedle-$PRODUCT_VERSION-macOS-Universal"
           python3 .github/scripts/installer_artifacts.py verify --installer "$base.dmg" --checksums "$base-SHA256SUMS"
           python3 -u packaging/macos/package.py install --image "$base.dmg" --prefix "$RUNNER_TEMP/Universal Applications" \
+            --evidence native-out/installer-evidence/universal-documents.json \
             2>&1 | tee native-out/installer-evidence/universal-install.log
       - name: Preserve clean macOS installation evidence
         if: always()
