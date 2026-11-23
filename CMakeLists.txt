@@ -14,7 +14,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 if(APPLE)
-    # Retain the system package manager's Qt library paths in the installed app.
+    # The source install uses the build host's Qt. The DMG builder relocates these libraries inside the app.
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 endif()
 add_subdirectory(desktop/qt)
@@ -86,7 +86,7 @@ else()
         set_target_properties(helloneedle PROPERTIES WIN32_EXECUTABLE TRUE)
         configure_file(cmake/windows.rc.in windows.rc @ONLY)
         target_sources(helloneedle PRIVATE "${CMAKE_BINARY_DIR}/windows.rc")
-        # This small launcher can display installation help before Qt is available.
+        # Keep the Explorer entry point independent of Qt so it can locate the installed runtime.
         add_executable(helloneedle-launcher WIN32 packaging/windows-launcher.c "${CMAKE_BINARY_DIR}/windows.rc")
         set_target_properties(helloneedle-launcher PROPERTIES OUTPUT_NAME "Hello Needle" AUTOMOC OFF AUTOUIC OFF)
         target_compile_definitions(helloneedle-launcher PRIVATE $<$<COMPILE_LANGUAGE:RC>:HELLO_NEEDLE_LAUNCHER>)
@@ -112,8 +112,7 @@ else()
     endif()
 endif()
 
-# The external Qt libraries and document converters come from the platform's
-# package manager. The statically linked worker crates have their own notices.
+# Desktop installers also collect the native runtime notices before assembly.
 set(qt_version "${Qt6_VERSION}")
 configure_file(cmake/NATIVE-COMPONENTS.md.in NATIVE-COMPONENTS.md @ONLY)
 install(TARGETS helloneedle RUNTIME DESTINATION "${app_bindir}")

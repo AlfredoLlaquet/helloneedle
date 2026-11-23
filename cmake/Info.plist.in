@@ -12,7 +12,4 @@
   <key>CFBundleShortVersionString</key><string>@PROJECT_VERSION@</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>LSEnvironment</key><dict>
-    <key>PATH</key><string>/opt/local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-  </dict>
 </dict></plist>

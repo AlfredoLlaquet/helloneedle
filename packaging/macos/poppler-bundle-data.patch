@@ -1,0 +1,28 @@
+--- a/poppler/GlobalParams.cc
++++ b/poppler/GlobalParams.cc
+@@ -64,2 +64,6 @@
+ #include <filesystem>
++#ifdef __APPLE__
++#    include <mach-o/dyld.h>
++#    include <vector>
++#endif
+ #include <utility>
+@@ -407,2 +411,18 @@
+ {
++#ifdef __APPLE__
++    // Hello Needle for macOS (2026-11-23). Helpers are installed together in
++    // Contents/MacOS and must find the maps when Finder moves the application.
++    if (popplerDataDir.empty()) {
++        uint32_t size = 0;
++        _NSGetExecutablePath(nullptr, &size);
++        std::vector<char> buffer(size);
++        if (size && _NSGetExecutablePath(buffer.data(), &size) == 0) {
++            std::error_code error;
++            auto path = std::filesystem::canonical(buffer.data(), error);
++            if (!error) {
++                popplerDataDir = (path.parent_path().parent_path() / "Resources" / "share" / "poppler").string();
++            }
++        }
++    }
++#endif
+     // scan the encoding in reverse because we want the lowest-numbered

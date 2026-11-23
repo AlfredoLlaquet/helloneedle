@@ -1,32 +1,16 @@
 Hello Needle for macOS
 
-Choose the archive for the Mac's operating system and processor.
+Open the Hello Needle disk image in Finder. Drag Hello Needle to the Applications shortcut. Eject the disk image, then open Hello Needle from Applications. The keyboard equivalent is to select Hello Needle, press Command+C, press Shift+Command+A to open Applications, and press Command+V.
 
-    macOS 26 Tahoe, Apple Silicon     arm64
-    macOS 15 Sequoia, Intel           x86_64
+The Universal disk image includes Intel and Apple Silicon code. The architecture-specific disk images are marked x86_64 (Intel) or arm64 (Apple Silicon). A per-architecture build's release notes give its tested macOS version. The installed application contains Qt, the Cocoa platform and macOS style plugins, Spanish translations, the search worker, and local PDF and Word readers with their runtime libraries and data.
 
-Both builds use MacPorts in its standard /opt/local location. If the
-Xcode Command Line Tools are missing, install them from Terminal.
+The app carries an ad hoc code signature. It has no Developer ID signature or Apple notarization. Download it from the official release. If the Mac's security policy permits it, macOS can offer Open Anyway in System Settings > Privacy & Security after the first attempt to open it.
 
-    xcode-select --install
+https://github.com/AlfredoLlaquet/helloneedle/releases
+https://support.apple.com/en-us/102445
 
-Download the MacPorts installer for Tahoe or Sequoia to match the
-installed system. https://www.macports.org/install.php
+To update, quit Hello Needle and replace its copy in Applications. To uninstall, quit the app and move it to the Trash. Documents and user preferences are stored separately.
 
-Install the four runtime packages from Terminal.
+The disk's LICENSE is Hello Needle's GNU General Public License. Help > Licenses displays the installed project and component notices offline. The full texts, the package inventory and the build's source revision are in Hello Needle.app/Contents/Resources/licenses. For a Universal build the architectures/arm64 and architectures/x86_64 subdirectories contain the corresponding native dependency records. The release provides the matching project source and native runtime source archives alongside the disk image.
 
-    sudo /opt/local/bin/port install qt6-qtbase qt6-qttranslations poppler antiword
-
-Extract the ZIP, move Hello Needle.app to Applications, and open it in
-Finder. Qt provides the interface and its standard translations. Poppler
-handles PDFs. The included worker reads Word 97–2003 documents directly,
-and antiword handles earlier Word formats.
-
-This build carries an ad hoc code signature. Gatekeeper can require
-approval or block launch according to the Mac's security policy.
-
-To update, quit Hello Needle and replace the app. To remove it, delete
-the app from Applications. MacPorts maintains the runtime packages.
-The app's Contents/Resources/licenses folder holds the component notices,
-installed package versions and source revision. The Actions run supplies
-the matching source archive.
+Created by Alfredo Llaquet-Alsina. Programmed by ChatGPT.

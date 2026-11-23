@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 add_library(helloneedle-desktop STATIC
-    application.cpp language.cpp workerclient.cpp mainwindow.cpp
+    application.cpp language.cpp runtime.cpp workerclient.cpp mainwindow.cpp
     previewpane.cpp pdfpane.cpp credits.cpp)
 target_include_directories(helloneedle-desktop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(helloneedle-desktop PUBLIC cxx_std_17)

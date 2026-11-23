@@ -3,36 +3,15 @@ use super::{Output, MAX_TEXT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use serde_json::json;
 use std::{
-    env,
     fs::File,
     io::Read,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
+    path::Path,
+    process::Stdio,
     thread,
     time::{Duration, Instant},
 };
 
 mod word97;
-
-fn executable() -> Option<PathBuf> {
-    let name = if cfg!(windows) {
-        "antiword.exe"
-    } else {
-        "antiword"
-    };
-    let bundled = env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join(name)));
-    let path = env::var_os("PATH").unwrap_or_default();
-    let dirs = env::split_paths(&path).filter(|dir| dir.is_absolute());
-    #[cfg(target_os = "macos")]
-    let dirs =
-        dirs.chain(["/opt/local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
-    bundled
-        .into_iter()
-        .chain(dirs.map(|dir| dir.join(name)))
-        .find(|p| p.is_file())
-}
 
 pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<()> {
     let mut sig = [0u8; 8];
@@ -51,7 +30,8 @@ pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<(
     if &sig == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" && word97::read(file, out)? {
         return Ok(());
     }
-    let program = executable().ok_or_else(|| anyhow!("missing_decoder: antiword"))?;
+    let mut command = crate::converters::command("antiword")
+        .ok_or_else(|| anyhow!("missing_decoder: antiword"))?;
     let absolute = path.canonicalize()?;
     let parent = absolute
         .parent()
@@ -63,20 +43,6 @@ pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<(
     // fopen and stat. Let the wide process API select the document's directory and
     // pass the usual relative filename. Prefixing the leaf also protects leading '-'.
     let input = Path::new(".").join(leaf);
-    let mut command = Command::new(&program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW when launched by the desktop
-    }
-    if env::var_os("ANTIWORDHOME").is_none() {
-        if let Some(prefix) = program.parent().and_then(Path::parent) {
-            let resources = prefix.join("share").join("antiword");
-            if resources.join("UTF-8.txt").is_file() && resources.join("fontnames").is_file() {
-                command.env("ANTIWORDHOME", resources);
-            }
-        }
-    }
     let mut child = command
         .args(["-t", "-w", "0", "-m", "UTF-8.txt"])
         .current_dir(parent)

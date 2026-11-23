@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "workerclient.h"
 #include "language.h"
-#include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
+#include "runtime.h"
 #include <QJsonDocument>
 #include <QProcess>
-#include <QStandardPaths>
 #include <QTimer>
 #ifdef Q_OS_UNIX
 #include <signal.h>
@@ -16,30 +13,6 @@
 #endif
 
 namespace hn {
-QString findTool(const QString &name)
-{
-    QString file = name;
-#ifdef Q_OS_WIN
-    file += QStringLiteral(".exe");
-#endif
-    if (name == QStringLiteral("helloneedle-worker")) {
-        for (const auto key : {"HELLONEEDLE_WORKER", "HELLO_NEEDLE_WORKER"}) {
-            const auto overridePath = qEnvironmentVariable(key);
-            if (!overridePath.isEmpty()) return overridePath;
-        }
-    }
-    const QDir app(QCoreApplication::applicationDirPath());
-    QStringList directories{app.path(), app.filePath("../libexec/helloneedle"), app.filePath("../libexec")};
-#ifdef Q_OS_MACOS
-    directories << QStringLiteral("/opt/local/bin") << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
-#endif
-    for (const auto &directory : directories) {
-        const QFileInfo candidate(QDir(directory).filePath(file));
-        if (candidate.isFile() && candidate.isExecutable()) return candidate.absoluteFilePath();
-    }
-    return QStandardPaths::findExecutable(file);
-}
-
 WorkerClient::WorkerClient(QObject *parent) : QObject(parent) {}
 WorkerClient::~WorkerClient() { stop(); }
 

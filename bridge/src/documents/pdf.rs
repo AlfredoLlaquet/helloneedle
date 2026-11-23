@@ -10,7 +10,7 @@ use quick_xml::{
 };
 use serde_json::{json, Value};
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,12 +22,8 @@ const DECODE_TIMEOUT: Duration = Duration::from_secs(45);
 pub(super) fn read(path: &Path) -> Result<Document> {
     // A file named "-something.pdf" must remain a path, including when the caller used a relative name.
     let path = std::path::absolute(path)?;
-    let mut command = Command::new(poppler_tool());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW for a GUI-launched decoder
-    }
+    let mut command = crate::converters::command("pdftotext")
+        .ok_or_else(|| anyhow!("tool_missing: pdftotext (Poppler utilities)"))?;
     command
         .args(["-bbox-layout", "-enc", "UTF-8"])
         .arg(path)
@@ -45,35 +41,6 @@ pub(super) fn read(path: &Path) -> Result<Document> {
         bail!("invalid_document: Poppler could not read the PDF");
     }
     parse(&output)
-}
-
-fn poppler_tool() -> PathBuf {
-    let name = if cfg!(windows) {
-        "pdftotext.exe"
-    } else {
-        "pdftotext"
-    };
-    if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.with_file_name(name);
-        if sibling.is_file() {
-            return sibling;
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let on_path = std::env::var_os("PATH").is_some_and(|path| {
-            std::env::split_paths(&path).any(|directory| directory.join(name).is_file())
-        });
-        if !on_path {
-            for directory in ["/opt/local/bin", "/opt/homebrew/bin", "/usr/local/bin"] {
-                let installed = Path::new(directory).join(name);
-                if installed.is_file() {
-                    return installed;
-                }
-            }
-        }
-    }
-    PathBuf::from(name)
 }
 
 fn run(command: &mut Command) -> Result<(ExitStatus, Vec<u8>, Vec<u8>)> {

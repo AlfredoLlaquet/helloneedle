@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "pdfpane.h"
 #include "language.h"
-#include "workerclient.h"
+#include "runtime.h"
 #include <QEvent>
 #include <QFile>
 #include <QHBoxLayout>
@@ -137,6 +137,7 @@ void PdfPane::goTo(int target)
     }
     auto *p = new QProcess(this);
     job = p;
+    configurePdfRenderer(*p, program);
     p->setStandardErrorFile(QProcess::nullDevice());
     QString argument = file;
 #ifdef Q_OS_UNIX

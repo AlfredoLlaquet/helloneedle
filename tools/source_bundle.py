@@ -87,8 +87,9 @@ def write_notices(directory):
         "# Rust dependency notices\n\n"
         "This inventory covers the locked dependency graph of the Hello Needle search worker, "
         "including platform-specific crates. The complete sources and their individual notices "
-        "are also in the corresponding source archive. System Qt, Poppler and other separately "
-        "installed programs are identified in the platform packaging instructions.\n\n"
+        "are also in the corresponding source archive. Native components such as Qt and Poppler "
+        "are identified in the package inventory. Desktop installers include their notices "
+        "under `LICENSES/native`, with matching source downloads.\n\n"
         "| Crate | Locked version | Declared license choices | Original notices |\n"
         "| --- | --- | --- | --- |\n"
     )

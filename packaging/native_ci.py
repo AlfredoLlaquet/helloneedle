@@ -97,11 +97,11 @@ def system_packages():
     return output(["pacman", "-Q", *dict.fromkeys(managed + runtime)])
 
 
-def converter_versions():
+def converter_versions(bindir=None):
     result = {}
     for name, flag in (("pdftotext", "-v"), ("pdftoppm", "-v"), ("antiword", "-h")):
-        executable = shutil.which(name)
-        if not executable:
+        executable = str(bindir / (name + EXE)) if bindir is not None else shutil.which(name)
+        if not executable or not Path(executable).is_file():
             raise SystemExit(f"Missing converter: {name}")
         # Antiword's -h includes the version and exits with its usage status.
         banner = subprocess.run([executable, flag], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -264,9 +264,18 @@ def verify(args):
             raise SystemExit(f"Installed notice mismatch: {path.name}")
     if not (docs / "LICENSES/rust/DEPENDENCIES.md").is_file():
         raise SystemExit("Missing Rust inventory.")
+    if args.bundled:
+        if not (docs / "LICENSES/native").is_dir():
+            raise SystemExit("The installed native runtime inventory is missing.")
+        packages = build_env.get("managed_packages", [])
+        converters = converter_versions(bindir)
+    else:
+        packages = system_packages().splitlines()
+        converters = converter_versions()
     (evidence / "host.json").write_text(json.dumps(
         {"commit": current, "version": build_env["version"], "host": os_description(), "machine": platform.machine(),
-         "platform": platform.platform(), "packages": system_packages().splitlines(), "converters": converter_versions()},
+         "platform": platform.platform(), "packages": packages, "converters": converters,
+         "runtime": "from installer" if args.bundled else "system packages"},
         indent=2) + "\n", encoding="utf-8")
     checks = {
         "installed-app": [app, "--smoke-test"],
@@ -279,7 +288,16 @@ def verify(args):
         for name, command in checks.items():
             logfile = evidence / (name + ".log")
             env = os.environ.copy()
-            if name == "installed-app" and SYSTEM == "Windows":
+            if args.bundled:
+                for key in ("HELLONEEDLE_UCRT64", "HELLONEEDLE_WORKER", "HELLO_NEEDLE_WORKER", "ANTIWORDHOME",
+                            "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "DYLD_LIBRARY_PATH",
+                            "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "FONTCONFIG_FILE", "FONTCONFIG_PATH"):
+                    env.pop(key, None)
+                if SYSTEM == "Windows":
+                    env["PATH"] = os.pathsep.join([str(Path(env["SystemRoot"]) / "System32"), env["SystemRoot"]])
+                else:
+                    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            elif name == "installed-app" and SYSTEM == "Windows":
                 # A double-click from Explorer has no MSYS2 shell or developer PATH.
                 prefix = Path(shutil.which("pdftotext")).parent.parent
                 default = Path(os.environ["SystemDrive"] + "/msys64/ucrt64")
@@ -312,6 +330,7 @@ def main():
     validator = actions.add_parser("verify")
     validator.add_argument("--prefix", required=True, type=Path)
     validator.add_argument("--tester", required=True, type=Path)
+    validator.add_argument("--bundled", action="store_true", help="test a self-contained desktop installer using its own runtime")
     validator.add_argument("--evidence", default=Path("native-out/evidence"), type=Path)
     validator.set_defaults(func=verify)
     args = parser.parse_args()

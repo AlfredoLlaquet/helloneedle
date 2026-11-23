@@ -1,27 +1,37 @@
-Hello Needle for Windows x64
+Hello Needle for Windows
 
-Install the current MSYS2 distribution from https://www.msys2.org/.
-Open the MSYS2 UCRT64 terminal and install the runtime packages with
+Windows installer
+
+Double-click HelloNeedle-1.0.0-Windows-x64-Setup.exe. Setup installs Hello
+Needle for the current account under %LOCALAPPDATA%\Programs\Hello Needle.
+Choose English or Spanish during setup. A desktop shortcut is optional.
+The installer includes Qt, its Spanish translation, Poppler and Antiword.
+It runs on Windows x64 and on Windows 11 Arm through x64 emulation.
+
+Open Hello Needle from the Start menu after installation. To update an
+existing installation, close Hello Needle and run the new installer.
+To remove Hello Needle and its shortcuts, open Settings > Apps > Installed
+apps and choose Uninstall.
+
+The application reads Word 97–2003 files directly. Antiword reads earlier
+Word formats. Poppler extracts PDF text and renders PDF pages. The bin,
+plugins, translations and share folders contain the app's runtime.
+License notices and package versions are under share\doc\helloneedle.
+The separate Runtime-Sources ZIP contains the matching dependency sources
+and build recipes. The versioned project source archive contains the
+application, its installer scripts and the locked Rust dependencies.
+
+Development ZIP
+
+The separate Windows x64 UCRT ZIP uses an existing MSYS2 installation.
+Install MSYS2 from https://www.msys2.org/ and open its UCRT64 terminal.
+Update the installation and install the runtime packages with
 
     pacman -Syu
     pacman -S --needed mingw-w64-ucrt-x86_64-{qt6-base,qt6-translations,poppler,antiword}
 
-If pacman asks to close the terminal during an update, reopen UCRT64 and
-complete the update before installing those four packages. The application
-requires no compiler, Rust installation, or Python installation.
-
-Use Extract All in Explorer and keep the extracted files together.
-Double-click Hello Needle.exe at the top of the extracted folder. It finds
-the standard C:\msys64\ucrt64 installation. For a custom installation,
-set the Windows environment variable HELLONEEDLE_UCRT64 to its full ucrt64
-folder, or start the launcher from the corresponding UCRT64 terminal.
-
-The bin folder contains the Qt application and search worker. Poppler
-provides PDF extraction and rendering. The worker reads Word 97–2003 files. Antiword handles earlier Word variants.
-Qt and these converters receive updates through MSYS2. This archive
-contains x64 binaries. Windows 11 on Arm runs them through x64 emulation.
-
-To update Hello Needle, quit the app and extract the replacement archive
-to a fresh folder. To remove it, delete the extracted folder. Installed
-licenses, package versions and the source revision are in
-share\doc\helloneedle. The Actions run supplies a matching source archive.
+If pacman asks to close the terminal, reopen UCRT64 and complete the update.
+Use Extract All in Explorer and double-click Hello Needle.exe at the top
+of the extracted folder. It finds the default C:\msys64\ucrt64 prefix.
+For a custom installation, set HELLONEEDLE_UCRT64 to the full ucrt64
+folder or launch Hello Needle from its UCRT64 terminal.

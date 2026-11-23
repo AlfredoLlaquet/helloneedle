@@ -7,7 +7,6 @@
 class QProcess;
 
 namespace hn {
-QString findTool(const QString &name);
 class WorkerClient final : public QObject {
 public:
     using Event = std::function<void(const QJsonObject &)>;

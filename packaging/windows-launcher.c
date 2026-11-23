@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Use only Windows system DLLs so Explorer can report a missing Qt runtime. */
+/* Explorer starts this system-only launcher before loading the private Qt runtime. */
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -18,7 +18,8 @@ static BOOL contains_qt(const wchar_t *bin)
     wchar_t dll[capacity];
     if (FAILED(StringCchPrintfW(dll, capacity, L"%ls\\Qt6Widgets.dll", bin)))
         return FALSE;
-    return GetFileAttributesW(dll) != INVALID_FILE_ATTRIBUTES;
+    DWORD attributes = GetFileAttributesW(dll);
+    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 static BOOL runtime_from(const wchar_t *variable, const wchar_t *suffix)
@@ -66,16 +67,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
         return failure(L"The application folder could not be located.",
                        L"No se ha encontrado la carpeta de la aplicación.", unattended);
     *name = L'\0';
-    if (FAILED(StringCchCatW(app, capacity, L"\\bin\\helloneedle.exe")) ||
+    if (FAILED(StringCchCatW(app, capacity, L"\\bin")) ||
+        FAILED(StringCchCopyW(runtime, capacity, app)) ||
+        FAILED(StringCchCatW(app, capacity, L"\\helloneedle.exe")) ||
         GetFileAttributesW(app) == INVALID_FILE_ATTRIBUTES)
-        return failure(L"Extract the entire Hello Needle ZIP, including its bin and share folders.",
-                       L"Extraiga el archivo ZIP de Hello Needle completo, incluidas las carpetas bin y share.", unattended);
+        return failure(L"The Hello Needle application is missing. Run Hello Needle Setup again to repair the installation.",
+                       L"Falta la aplicación Hello Needle. Vuelva a ejecutar el instalador para reparar la instalación.", unattended);
 
-    if (GetEnvironmentVariableW(L"PATH", original_path, capacity) >= capacity || !find_runtime())
-        return failure(L"Install the MSYS2 UCRT64 runtime packages listed in WINDOWS.txt. "
-                       L"For a custom installation, set HELLONEEDLE_UCRT64 to the full ucrt64 folder.",
-                       L"Instale los paquetes de MSYS2 UCRT64 indicados en WINDOWS.txt. Si ha instalado MSYS2 "
-                       L"en otra ubicación, asigne a HELLONEEDLE_UCRT64 la ruta completa a la carpeta ucrt64.", unattended);
+    if (GetEnvironmentVariableW(L"PATH", original_path, capacity) >= capacity ||
+        (!contains_qt(runtime) && !find_runtime()))
+        return failure(L"Hello Needle could not locate Qt. Run Setup again to repair the installation. "
+                       L"For a source build, see WINDOWS.txt.",
+                       L"Hello Needle no ha encontrado Qt. Vuelva a ejecutar el instalador para reparar la instalación. "
+                       L"Para una compilación desde el código fuente, consulte WINDOWS.txt.", unattended);
     if (FAILED(StringCchPrintfW(path, capacity, L"%ls;%ls", runtime, original_path)) ||
         !SetEnvironmentVariableW(L"PATH", path) ||
         FAILED(StringCchPrintfW(command, capacity, L"\"%ls\" %ls", app, arguments)))
@@ -86,8 +90,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
     PROCESS_INFORMATION process = {0};
     startup.cb = sizeof(startup);
     if (!CreateProcessW(app, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process))
-        return failure(L"Windows could not start Hello Needle. See WINDOWS.txt for the runtime packages.",
-                       L"Windows no ha podido iniciar Hello Needle. Consulte la lista de paquetes en WINDOWS.txt.", unattended);
+        return failure(L"Windows could not start Hello Needle. See WINDOWS.txt for installation help.",
+                       L"Windows no ha podido iniciar Hello Needle. Consulte las instrucciones en WINDOWS.txt.", unattended);
     CloseHandle(process.hThread);
     DWORD result = 1;
     WaitForSingleObject(process.hProcess, INFINITE);

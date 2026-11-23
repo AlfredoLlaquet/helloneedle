@@ -34,14 +34,25 @@ Office previews show a passage in reading order. Pagination and layout can diffe
 
 ## Install and run
 
-The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-worker` automatically. The FreeBSD/Linux package-manager builds, Windows UCRT64 archive, and macOS app use separately installed Qt and document tools. Binary artifacts are accompanied by the exact project source, locked Rust dependencies, checksums, and the build inventory. [Download 1.0.0 packages and matching source](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45262698979#artifacts) · [Build and packaging record](AGENTS.md#build-install-and-package)
+The Windows Setup installer and the Mac disk image include Qt, Poppler, antiword, and the Spanish Qt translations. FreeBSD and Linux use their own package managers for these dependencies. The desktop application starts its search worker automatically. [Downloads](https://github.com/AlfredoLlaquet/helloneedle/releases) · [Native builds and corresponding source](https://github.com/AlfredoLlaquet/helloneedle/actions/workflows/helloneedle.yml)
 
-| Platform | Runtime and package |
+| Platform | Installation |
 | --- | --- |
-| FreeBSD | Install the `.pkg` with `pkg add ./<package>.pkg` on a compatible FreeBSD release. Qt 6, Poppler utilities, and antiword come from FreeBSD packages. Launch **Hello Needle** from the desktop or run `helloneedle`. |
-| Linux | On the matching Ubuntu release, install the downloaded `.deb` with `sudo apt install ./<package>.deb`. A graphical desktop entry and the `helloneedle` command are installed. Other distributions can build from source. |
-| Windows | Use the MSYS2 **UCRT64** build. Install the MSYS2 runtime packages, extract the archive, and double-click **Hello Needle.exe** at its top level. [Windows runtime instructions](packaging/WINDOWS.txt) |
-| macOS | The verified Intel archive targets macOS 15 Sequoia (`x86_64`). The Apple Silicon build targets macOS 26 Tahoe (`arm64`). Install the MacPorts runtime packages in `/opt/local`, extract the ad hoc signed **Hello Needle.app**, and open it in Finder. [macOS runtime instructions](packaging/MACOS.txt) |
+| FreeBSD | On a compatible FreeBSD release, install the `.pkg` with `pkg add ./helloneedle-1.0.0.pkg`. Launch **Hello Needle** from the desktop or run `helloneedle`. |
+| Linux | On the matching Ubuntu release, install the `.deb` with `sudo apt install ./<package>.deb`. A desktop entry and the `helloneedle` command are installed. Other distributions can build from source. |
+| Windows x64 | Run `HelloNeedle-1.0.0-Windows-x64-Setup.exe`. Setup installs for the current account and adds **Hello Needle** to Start. A desktop shortcut is optional. Run Setup again to repair the installation. To remove it, use **Settings → Apps → Installed apps**. [Windows installation](packaging/WINDOWS.txt) |
+| macOS on Intel or Apple Silicon | Open `HelloNeedle-1.0.0-macOS-Universal.dmg`, drag **Hello Needle** to **Applications**, then open it from there. To update, quit and replace the app. To remove it, move the app to the Trash. [Mac installation](packaging/MACOS.txt) |
+
+### Verify a download
+
+GitHub Actions signs an artifact attestation for each installer. With GitHub CLI installed, run the command for the file that was downloaded. A successful verification identifies this repository, the build workflow and the source revision.
+
+```sh
+gh attestation verify HelloNeedle-1.0.0-Windows-x64-Setup.exe --repo AlfredoLlaquet/helloneedle
+gh attestation verify HelloNeedle-1.0.0-macOS-Universal.dmg --repo AlfredoLlaquet/helloneedle
+```
+
+The download also has a SHA-256 checksum. Windows may display **Unknown publisher** because the installer carries GitHub provenance and has no Microsoft Authenticode publisher certificate. The Mac app uses an ad hoc signature and may prompt for approval on first launch. [GitHub verification](https://cli.github.com/manual/gh_attestation_verify) · [Build and packaging record](AGENTS.md#build-install-and-package)
 
 ### Build from source
 
