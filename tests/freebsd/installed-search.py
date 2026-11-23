@@ -102,12 +102,26 @@ def check_window(process, language):
         focus_window()
         press("ctrl+Return")
 
-    def toggle_nautilus():
+    def toggle_nautilus(position):
         row = named_control("Nautilus", "Component")
         focus_window()
-        if not Atspi.Component.grab_focus(row):
-            raise RuntimeError("Could not focus the Nautilus preference")
-        press("space")
+        window = subprocess.check_output(["xdotool", "getwindowfocus", "-f"], text=True, timeout=10).strip()
+        previous = None
+
+        def settled_bounds():
+            nonlocal previous
+            bounds = Atspi.Component.get_extents(row, Atspi.CoordType.WINDOW)
+            current = (bounds.x, bounds.y, bounds.width, bounds.height)
+            stable = current == previous and bounds.width > 0 and bounds.height > 0
+            previous = current
+            return bounds if stable else None
+
+        bounds = wait_for("the Nautilus switch to finish opening", process, settled_bounds)
+        # Click at different points in the row so GTK recognizes two separate clicks.
+        x = bounds.x + position * bounds.width // 3
+        y = bounds.y + bounds.height // 2
+        subprocess.run(["xdotool", "mousemove", "--window", window, str(x), str(y)], check=True, timeout=10)
+        subprocess.run(["xdotool", "click", "1"], check=True, timeout=10)
 
     def labels():
         return [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.LABEL]
@@ -147,11 +161,11 @@ def check_window(process, language):
         if extension.exists():
             raise RuntimeError(f"Unexpected preexisting extension: {extension}")
         subprocess.run(["gapplication", "action", "de.leopoldluley.Clapgrep", "preferences"], check=True, timeout=10)
-        toggle_nautilus()
+        toggle_nautilus(1)
         wait_for("the installed Nautilus extension", process, extension.is_file)
         if extension.read_bytes() != original.read_bytes():
             raise RuntimeError("The installed Nautilus extension differs from the packaged source")
-        toggle_nautilus()
+        toggle_nautilus(2)
         wait_for("removal of the Nautilus extension", process, lambda: not extension.exists())
         print("Preferences installed and removed the Nautilus extension under XDG_DATA_HOME.")
     except Exception:
