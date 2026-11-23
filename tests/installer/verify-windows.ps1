@@ -102,11 +102,31 @@ function Check-Shortcut([string]$Link, [string]$Target) {
 }
 
 function Check-ShellLaunch([string]$Link, [string]$DesktopExecutable) {
+    if (-not ('HelloNeedleInstaller.ExitStatus' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace HelloNeedleInstaller {
+    public static class ExitStatus {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint code);
+        public static uint Read(SafeProcessHandle process) {
+            uint code;
+            if (!GetExitCodeProcess(process, out code)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return code;
+        }
+    }
+}
+'@
+    }
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $Link
     $start.UseShellExecute = $true
     $shellProcess = [Diagnostics.Process]::Start($start)
     $gui = $null
+    $launcherProcess = $null
+    $report = [ordered]@{shortcut=$Link}
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(35)
         do {
@@ -114,6 +134,9 @@ function Check-ShellLaunch([string]$Link, [string]$DesktopExecutable) {
                 foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('helloneedle')) {
                     if (-not $gui -and (Same-Path $candidate.MainModule.FileName $DesktopExecutable)) {
                         $gui = $candidate
+                        # An enumerated Process does not retain a kernel handle until
+                        # requested. Once the PID disappears its ExitCode can be null.
+                        $guiHandle = $gui.SafeHandle
                     } else { $candidate.Dispose() }
                 }
             }
@@ -136,16 +159,43 @@ function Check-ShellLaunch([string]$Link, [string]$DesktopExecutable) {
             }
         }
         $modules = @($loaded.Values | Where-Object { $_ -match '\\(Qt6[^\\]+|qwindows|qmodernwindowsstyle)\.dll$' } | Sort-Object)
-        [ordered]@{shortcut=$Link; windowTitle=$gui.MainWindowTitle; executable=$gui.MainModule.FileName;
-            modules=$modules} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'start-menu-launch.json') -Encoding utf8
-        if (-not $gui.CloseMainWindow() -or -not $gui.WaitForExit(15000) -or $gui.ExitCode -ne 0) {
-            throw 'The application opened from the Start menu did not close normally.'
+        $report.windowTitle = $gui.MainWindowTitle
+        $report.executable = $gui.MainModule.FileName
+        $report.modules = $modules
+        $report.guiPid = $gui.Id
+        $launcherPath = Join-Path $directory 'Hello Needle.exe'
+        # ShellExecute may return its broker instead of the executable. Only wait
+        # for the verified installed launcher, which explicitly returns the GUI status.
+        foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('Hello Needle')) {
+            if (-not $launcherProcess -and (Same-Path $candidate.MainModule.FileName $launcherPath)) {
+                $launcherProcess = $candidate
+                $launcherHandle = $launcherProcess.SafeHandle
+                $report.launcherPid = $launcherProcess.Id
+            } else { $candidate.Dispose() }
+        }
+        $report.closeRequested = $gui.CloseMainWindow()
+        if (-not $report.closeRequested) { throw 'Windows rejected the close request for the installed main window.' }
+        $report.guiExited = $gui.WaitForExit(15000)
+        if (-not $report.guiExited) { throw 'The installed GUI did not exit within 15 seconds of the close request.' }
+        $report.guiExitCode = [HelloNeedleInstaller.ExitStatus]::Read($guiHandle)
+        if ($launcherProcess) {
+            $report.launcherExited = $launcherProcess.WaitForExit(10000)
+            if (-not $report.launcherExited) { throw 'The installed launcher did not exit after the GUI closed.' }
+            $report.launcherExitCode = [HelloNeedleInstaller.ExitStatus]::Read($launcherHandle)
+            if ($report.launcherExitCode -ne $report.guiExitCode) {
+                throw "GUI exit $($report.guiExitCode) differs from launcher exit $($report.launcherExitCode)."
+            }
+        }
+        if ($report.guiExitCode -ne 0) {
+            throw ('The installed GUI exited with native status 0x{0:X8}.' -f $report.guiExitCode)
         }
     } finally {
+        $report | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'start-menu-launch.json') -Encoding utf8
         if ($gui) {
             if (-not $gui.HasExited) { $gui.Kill($true); [void]$gui.WaitForExit(5000) }
             $gui.Dispose()
         }
+        if ($launcherProcess) { $launcherProcess.Dispose() }
         if ($shellProcess) { $shellProcess.Dispose() }
     }
 }

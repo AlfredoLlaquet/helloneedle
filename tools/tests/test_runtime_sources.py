@@ -40,6 +40,19 @@ class RuntimeSourcesTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "does not match installed"):
             msys2.signed_source_inputs("unit-2-2", metadata, members)
 
+    def test_read_only_verifier_checks_the_primary_and_signing_keys_against_revocations(self):
+        signer = "A" * 40
+        primary = "B" * 40
+        valid = f"[GNUPG:] VALIDSIG {signer} 2026-11-23 1795392000 0 4 0 1 10 00 {primary}"
+        self.assertEqual(msys2.verified_signer(valid, set())["primaryFingerprint"], primary)
+        for disabled in (signer, primary):
+            with self.subTest(disabled=disabled), self.assertRaisesRegex(ValueError, "revoked"):
+                msys2.verified_signer(valid, {disabled})
+        with self.assertRaisesRegex(ValueError, "invalid or expired"):
+            msys2.verified_signer("[GNUPG:] EXPKEYSIG 1234 packager\n" + valid, set())
+        with self.assertRaisesRegex(ValueError, "one verified"):
+            msys2.verified_signer("[GNUPG:] NEWSIG", set())
+
     def test_macports_distfiles_verify_the_actual_cached_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test-1.tar.gz"

@@ -220,10 +220,17 @@ class Bundle:
 
 
 def sign(app):
+    contents = app / "Contents"
+    info = plistlib.loads((contents / "Info.plist").read_bytes())
+    main = contents / "MacOS" / info["CFBundleExecutable"]
     for binary in mach_files(app):
-        run("codesign", "--force", "--sign", "-", "--timestamp=none", binary)
-    frameworks = (app / "Contents/Frameworks").glob("*.framework")
-    for framework in sorted(frameworks):
+        # Signing the main executable implicitly processes its enclosing app.
+        # Framework executables likewise receive their signature with their
+        # framework. Sign ordinary nested code and helpers first.
+        if binary != main and not any(p.suffix == ".framework" for p in binary.relative_to(app).parents):
+            run("codesign", "--force", "--sign", "-", "--timestamp=none", binary)
+    frameworks = (contents / "Frameworks").rglob("*.framework")
+    for framework in sorted(frameworks, key=lambda p:len(p.parts), reverse=True):
         run("codesign", "--force", "--sign", "-", "--timestamp=none", framework)
     run("codesign", "--force", "--sign", "-", "--timestamp=none", app)
 

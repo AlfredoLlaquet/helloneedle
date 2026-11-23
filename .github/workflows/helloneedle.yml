@@ -116,7 +116,7 @@ jobs:
           (cd "$RUNNER_TEMP" && echo "$checksum  $installer" | shasum -a 256 -c)
           pkgutil --check-signature "$RUNNER_TEMP/$installer"
           sudo installer -pkg "$RUNNER_TEMP/$installer" -target /
-          sudo /opt/local/bin/port -N install qt6-qtbase qt6-qttranslations poppler antiword ninja zstd lzip
+          sudo /opt/local/bin/port -N install qt6-qtbase qt6-qttranslations poppler antiword ninja pkgconfig zstd lzip
           printf '%s\n' /opt/local/bin >> "$GITHUB_PATH"
           printf '%s\n' 'CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local' >> "$GITHUB_ENV"
       - name: Build the application and retain the transcript
