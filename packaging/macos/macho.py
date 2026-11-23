@@ -230,12 +230,15 @@ def sign(app):
         if binary != main and not any(p.suffix == ".framework" for p in binary.relative_to(app).parents):
             run("codesign", "--force", "--sign", "-", "--timestamp=none", binary)
     frameworks = (contents / "Frameworks").rglob("*.framework")
-    for framework in sorted(frameworks, key=lambda p:len(p.parts), reverse=True):
+    for framework in sorted(frameworks, key=lambda path: len(path.parts), reverse=True):
         run("codesign", "--force", "--sign", "-", "--timestamp=none", framework)
     run("codesign", "--force", "--sign", "-", "--timestamp=none", app)
 
 
 def verify(app, archs):
+    # Temporary volumes may be reached through macOS's /var -> /private/var.
+    # Compare canonical paths on both sides when checking bundle boundaries.
+    app = app.resolve(strict=True)
     contents = app / "Contents"
     plist = plistlib.loads((contents / "Info.plist").read_bytes())
     if plist.get("CFBundleIdentifier") != "org.thecrumbs.HelloNeedle" or plist.get("LSEnvironment"):
@@ -249,7 +252,7 @@ def verify(app, archs):
         if not (contents / item).exists():
             raise ValueError(f"Missing bundled runtime component: {item}")
     for path in app.rglob("*"):
-        if path.is_symlink() and (not path.exists() or not path.resolve().is_relative_to(app.resolve())):
+        if path.is_symlink() and (not path.exists() or not path.resolve().is_relative_to(app)):
             raise ValueError(f"Escaping or broken bundle link: {path}")
     for binary in mach_files(app):
         if not set(archs).issubset(slices(binary)):

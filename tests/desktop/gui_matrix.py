@@ -159,7 +159,9 @@ def main():
     cases = []
     review = None
     with tempfile.TemporaryDirectory(prefix="helloneedle-gui-") as temp:
-        scratch = Path(temp)
+        # Windows TEMP can spell the user profile with an 8.3 alias. The
+        # native dialog returns the long path when a folder is selected.
+        scratch = Path(temp).resolve(strict=True)
         docs = scratch / "sample documents"
         write_documents(docs)
         (docs / ".ignore").write_text("ignored.txt\n", encoding="utf-8")
