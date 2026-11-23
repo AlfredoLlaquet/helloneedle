@@ -34,7 +34,7 @@ def require_cpus(path, expected):
         raise ValueError(f"{path} contains {actual}; expected {set(expected)}")
 
 
-def target_flags(args, prefix, deployment):
+def target_flags(args, prefix, deployment, sdk):
     result = []
     i = 0
     while i < len(args):
@@ -52,7 +52,12 @@ def target_flags(args, prefix, deployment):
                 arg = flag + str(prefix / Path(arg[len(flag):]).relative_to(HOST_PREFIX))
                 break
         result.append(arg)
-    return ["-arch", CPU, f"-mmacosx-version-min={deployment}", *result]
+    # Calling Xcode's clang by its absolute toolchain path bypasses the xcrun
+    # driver that normally selects an SDK. CMake may have supplied one itself.
+    has_sdk = any(arg.startswith("-isysroot") or arg == "--sysroot" or arg.startswith("--sysroot=")
+                  for arg in result)
+    sdk_flags = [] if has_sdk else ["-isysroot", str(sdk)]
+    return ["-arch", CPU, f"-mmacosx-version-min={deployment}", *sdk_flags, *result]
 
 
 def link_args(build, ninja, name):
@@ -69,12 +74,12 @@ def link_args(build, ninja, name):
     raise ValueError(f"Missing native CMake linker invocation for {target}")
 
 
-def cross_cpp(build, prefix, work, target_names, deployment):
+def cross_cpp(build, prefix, work, target_names, deployment, sdk):
     database = build / "compile_commands.json"
     if not database.is_file():
         subprocess.run(["cmake", "-S", ROOT, "-B", build, "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], check=True)
     entries = json.loads(database.read_text())
-    clang = output("xcrun", "--find", "clang++")
+    clang = output("xcrun", "--sdk", "macosx", "--find", "clang++")
     obj_root = work / "objects"
     objects = {}
     lib_objects = []
@@ -97,7 +102,7 @@ def cross_cpp(build, prefix, work, target_names, deployment):
         # A cross compilation must never replace the native dependency file.
         if "-MF" in args:
             args[args.index("-MF") + 1] = str(dest) + ".d"
-        jobs.append(([clang, *target_flags(args[1:], prefix, deployment)], directory))
+        jobs.append(([clang, *target_flags(args[1:], prefix, deployment, sdk)], directory))
         objects[native] = dest
         if "helloneedle-desktop.dir" in relative.parts:
             lib_objects.append(dest)
@@ -122,7 +127,7 @@ def cross_cpp(build, prefix, work, target_names, deployment):
                 native[i] = str(library)
             elif arg.startswith("-Wl,-dependency_info,"):
                 native[i] = "-Wl,-dependency_info," + str(work / f"{name}.link.d")
-        subprocess.run([clang, *target_flags(native, prefix, deployment)], cwd=build, check=True)
+        subprocess.run([clang, *target_flags(native, prefix, deployment, sdk)], cwd=build, check=True)
         require_cpus(work / "bin" / name, [CPU])
 
 
@@ -142,17 +147,19 @@ def main():
         raise ValueError("Specify new cross-build and output directories")
     darwin = platform.release().split(".")[0]
     deployment = platform.mac_ver()[0].split(".")[0] + ".0"
+    sdk = Path(output("xcrun", "--sdk", "macosx", "--show-sdk-path")).resolve(strict=True)
     work.mkdir(parents=True)
     manifest = args.runtime_manifest or build / "macos-deploy/runtime-manifest.json"
     prefix = stage(work, darwin, manifest)
     target_names = ["helloneedle", "helloneedle-gui-tests"]
-    cross_cpp(build, prefix, work, target_names, deployment)
+    cross_cpp(build, prefix, work, target_names, deployment, sdk)
 
     subprocess.run(["rustup", "target", "add", RUST_TARGET], check=True)
     rust_dir = build / "cargo"
     env = os.environ.copy()
     env["MACOSX_DEPLOYMENT_TARGET"] = deployment
-    env["CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"] = output("xcrun", "--find", "clang")
+    env["SDKROOT"] = str(sdk)
+    env["CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"] = output("xcrun", "--sdk", "macosx", "--find", "clang")
     subprocess.run(["cargo", "build", "--locked", "--release", "--target", RUST_TARGET,
                     "--manifest-path", ROOT / "bridge/Cargo.toml", "--target-dir", rust_dir], env=env, check=True)
     worker = rust_dir / RUST_TARGET / "release/helloneedle-worker"

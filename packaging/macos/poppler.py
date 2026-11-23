@@ -57,6 +57,12 @@ def build(work, sources, notices, prefix, cpu):
                 "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-headerpad_max_install_names",
                 f"-DCMAKE_OSX_ARCHITECTURES={cpu}", f"-DCMAKE_PREFIX_PATH={prefix}",
                 "-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF"]
+    if prefix != Path("/opt/local"):
+        # The private MacPorts prefix provides target libraries. The C++
+        # standard library headers and Apple frameworks come from Xcode's SDK.
+        sdk = os.environ.get("SDKROOT") or subprocess.check_output(
+            ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
+        settings.append(f"-DCMAKE_OSX_SYSROOT={sdk}")
     if os.environ.get("CMAKE_OSX_DEPLOYMENT_TARGET"):
         settings.append("-DCMAKE_OSX_DEPLOYMENT_TARGET=" + os.environ["CMAKE_OSX_DEPLOYMENT_TARGET"])
     subprocess.run(["cmake", "-S", src, "-B", out, "-G", "Ninja", *settings], check=True)

@@ -127,6 +127,12 @@ Each environment below passed 59 GUI checks across ten configurations. The tests
 
 The first-launch column shows the host’s default appearance. The dark-mode images show Spanish controls at increased scaling with the options expanded. FreeBSD and Ubuntu used X11 with Openbox. Their explicit dark runs used a test palette with the native XCB plugin. Windows used its platform settings. On macOS Sequoia, the application used Cocoa. The desktop kept its light system menu bar in both application themes. The tests verified that Hello Needle owned that menu bar and that all four application menus showed their English or Spanish titles. The screenshot manifests identify the capture source for each window.
 
+A separate installer build at revision `3ec29a516602` passed 59 native Cocoa checks across ten configurations on Apple Silicon. [Native Apple Silicon build and tests](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45282805114/job/138071728271) · [Complete screenshot set](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45282805114/artifacts/14870284448)
+
+| Tested system | Qt | Screenshots | Window and controls |
+| --- | --- | ---: | --- |
+| macOS Tahoe 26.7.2, Apple Silicon (arm64) | 6.12.0 | 84 | [First launch](docs/screenshots/1.0.0/macarm-first-launch.png) · [Spanish dark mode at 150%](docs/screenshots/1.0.0/macarm-spanish-dark.png) |
+
 The search suite verified 15 selected occurrences across 13 document formats, checked Word 97 text with the converter path empty and compared the original files before and after the tests. The corresponding-source archive also built and installed the Qt application with an empty Cargo registry and all 110 bundled dependencies. The resulting program passed the installed search and preview tests.
 
 ## Historical FreeBSD reference
