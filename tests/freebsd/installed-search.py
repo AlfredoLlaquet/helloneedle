@@ -78,6 +78,7 @@ def check_window(process, language):
         return None
 
     app = wait_for("the installed GTK application", process, find_app)
+
     def named_control(name, interface):
         return wait_for(name, process, lambda: next((
             node for node in walk(app)
@@ -85,32 +86,28 @@ def check_window(process, language):
             and interface in node.get_interfaces()
         ), None))
 
-    def click(name):
-        control = named_control(name, "Component")
-        if "Action" in control.get_interfaces():
-            for index in range(Atspi.Action.get_n_actions(control)):
-                if Atspi.Action.get_action_name(control, index) in ("click", "activate", "toggle"):
-                    if Atspi.Action.do_action(control, index):
-                        return
-        # Some actionable Adwaita rows expose a component but no AT-SPI action.
-        window = subprocess.check_output(
-            ["xdotool", "search", "--sync", "--onlyvisible", "--pid", str(process.pid)],
-            text=True, timeout=10,
-        ).splitlines()[-1]
-        bounds = Atspi.Component.get_extents(control, Atspi.CoordType.WINDOW)
-        if bounds.width <= 0 or bounds.height <= 0:
-            raise RuntimeError(f"No clickable area for {name!r}")
-        x = bounds.x + bounds.width // 2
-        y = bounds.y + bounds.height // 2
-        subprocess.run(["xdotool", "mousemove", "--window", window, str(x), str(y), "click", "1"],
-                       check=True, timeout=10)
+    def focus_window():
+        subprocess.run(["xdotool", "search", "--sync", "--onlyvisible", "--pid", str(process.pid),
+                        "windowfocus", "--sync"], check=True, timeout=10)
+
+    def press(key):
+        # A separate command delivers native XTEST events to the focused window.
+        subprocess.run(["xdotool", "key", "--clearmodifiers", key], check=True, timeout=10)
 
     def search(term):
         entry = named_control(entry_name, "EditableText")
         if not Atspi.EditableText.set_text_contents(entry, term):
             raise RuntimeError(f"Could not enter {term!r} in {entry_name!r}")
         wait_for(f"entered query {term!r}", process, lambda: Atspi.Text.get_text(entry, 0, -1) == term)
-        click(button_name)
+        focus_window()
+        press("ctrl+Return")
+
+    def toggle_nautilus():
+        row = named_control("Nautilus", "Component")
+        focus_window()
+        if not Atspi.Component.grab_focus(row):
+            raise RuntimeError("Could not focus the Nautilus preference")
+        press("space")
 
     def labels():
         return [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.LABEL]
@@ -134,6 +131,7 @@ def check_window(process, language):
                 and not {"letter.docx", "notes.txt", "paper.pdf", "decoy.txt"}.intersection(current))
 
     try:
+        named_control(button_name, "Component")
         search("searchmarker")
         wait_for("the text line, PDF page, and Office paragraph", process, all_formats_shown)
         search("Office searchmarker")
@@ -149,11 +147,11 @@ def check_window(process, language):
         if extension.exists():
             raise RuntimeError(f"Unexpected preexisting extension: {extension}")
         subprocess.run(["gapplication", "action", "de.leopoldluley.Clapgrep", "preferences"], check=True, timeout=10)
-        click("Nautilus")
+        toggle_nautilus()
         wait_for("the installed Nautilus extension", process, extension.is_file)
         if extension.read_bytes() != original.read_bytes():
             raise RuntimeError("The installed Nautilus extension differs from the packaged source")
-        click("Nautilus")
+        toggle_nautilus()
         wait_for("removal of the Nautilus extension", process, lambda: not extension.exists())
         print("Preferences installed and removed the Nautilus extension under XDG_DATA_HOME.")
     except Exception:
