@@ -17,7 +17,13 @@ trap 'exit 1' HUP INT TERM
 export XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data"
 export XDG_CACHE_HOME="$work/cache" XDG_STATE_HOME="$work/state"
 export XDG_RUNTIME_DIR="$work/runtime" GSETTINGS_BACKEND=memory
-export LC_ALL=en_US.UTF-8 GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=atspi
+language=${1:-en}
+case "$language" in
+    en) export LC_ALL=en_US.UTF-8 ;;
+    es) export LC_ALL=es_ES.UTF-8 ;;
+    *) echo "Usage: $0 [en|es]" >&2; exit 2 ;;
+esac
+export LANGUAGE="$language" GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=atspi
 mkdir -m 700 "$XDG_RUNTIME_DIR"
 mkdir "$work/documents"
 
@@ -31,5 +37,5 @@ while [ ! -s "$work/display" ]; do
     sleep 0.1
 done
 export DISPLAY=":$(cat "$work/display")"
-dbus-run-session -- python3 "$(dirname "$0")/installed-search.py" "$work/documents"
+dbus-run-session -- python3 "$(dirname "$0")/installed-search.py" "$work/documents" "$language"
 # CG4FBS END

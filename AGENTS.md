@@ -60,7 +60,7 @@ Keep coverage for these behaviors when integrating upstream changes.
 - On a native desktop, the optional Nautilus integration uses the account’s XDG data directory. The search-folder row must open without GTK critical errors.
 - The desktop-entry and AppStream metadata checks run alongside the Cargo workspace tests. Use a virtual X11 display and fresh per-user XDG settings for the graphical checks.
 
-Build and install once per VM run. Reuse that installation for testing in `UTC` and `Europe/Madrid`, with fresh settings for each zone. Record which checks used a virtual display and which desktop sessions received additional manual testing.
+Build and install once per VM run. Exercise the installed interface in English under `UTC` and in Spanish under `Europe/Madrid`, with fresh settings for each run. Record which checks used a virtual display and which desktop sessions received additional manual testing.
 
 ### Keeping the README in sync
 

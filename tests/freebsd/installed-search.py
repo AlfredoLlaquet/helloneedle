@@ -1,4 +1,5 @@
 # CG4FBS BEGIN ADDITION — Check search results through the real GTK window.
+import os
 import re
 import subprocess
 import sys
@@ -62,7 +63,11 @@ def wait_for(description, process, check):
     raise RuntimeError(f"Timed out waiting for {description}") from last_error
 
 
-def check_window(process):
+def check_window(process, language):
+    entry_name, button_name, no_results = {
+        "en": ("Search Pattern", "Start Search", "No Results"),
+        "es": ("Patrón de búsqueda", "Iniciar búsqueda", "Sin resultados"),
+    }[language]
     desktop = Atspi.get_desktop(0)
 
     def find_app():
@@ -73,39 +78,100 @@ def check_window(process):
         return None
 
     app = wait_for("the installed GTK application", process, find_app)
+    def named_control(name, interface):
+        return wait_for(name, process, lambda: next((
+            node for node in walk(app)
+            if node.get_name() == name and node.get_role() != Atspi.Role.LABEL
+            and interface in node.get_interfaces()
+        ), None))
+
+    def click(name):
+        control = named_control(name, "Component")
+        if "Action" in control.get_interfaces():
+            for index in range(Atspi.Action.get_n_actions(control)):
+                if Atspi.Action.get_action_name(control, index) in ("click", "activate", "toggle"):
+                    if Atspi.Action.do_action(control, index):
+                        return
+        # Some actionable Adwaita rows expose a component but no AT-SPI action.
+        window = subprocess.check_output(
+            ["xdotool", "search", "--sync", "--onlyvisible", "--pid", str(process.pid)],
+            text=True, timeout=10,
+        ).splitlines()[-1]
+        bounds = Atspi.Component.get_extents(control, Atspi.CoordType.WINDOW)
+        if bounds.width <= 0 or bounds.height <= 0:
+            raise RuntimeError(f"No clickable area for {name!r}")
+        x = bounds.x + bounds.width // 2
+        y = bounds.y + bounds.height // 2
+        subprocess.run(["xdotool", "mousemove", "--window", window, str(x), str(y), "click", "1"],
+                       check=True, timeout=10)
+
+    def search(term):
+        entry = named_control(entry_name, "EditableText")
+        if not Atspi.EditableText.set_text_contents(entry, term):
+            raise RuntimeError(f"Could not enter {term!r} in {entry_name!r}")
+        wait_for(f"entered query {term!r}", process, lambda: Atspi.Text.get_text(entry, 0, -1) == term)
+        click(button_name)
+
+    def labels():
+        return [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.LABEL]
+
+    def all_formats_shown():
+        current = labels()
+        visible = " ".join(label for label in current if label)
+        return (all(name in current for name in ("notes.txt", "paper.pdf", "letter.docx", "Office searchmarker"))
+                and "decoy.txt" not in current
+                and re.search(r"\b3\s*:\s*Text searchmarker", visible)
+                and re.search(r"\b2\s*:\s*PDF searchmarker", visible))
+
+    def only_office_shown():
+        current = labels()
+        return ("letter.docx" in current and "Office searchmarker" in current
+                and not {"notes.txt", "paper.pdf", "decoy.txt"}.intersection(current))
+
+    def empty_state_shown():
+        current = labels()
+        return (no_results in current
+                and not {"letter.docx", "notes.txt", "paper.pdf", "decoy.txt"}.intersection(current))
+
     try:
-        # Search Pattern is the first editable field, before the optional File Pattern.
-        entry = wait_for("the search field", process, lambda: next(
-            (node for node in walk(app) if "EditableText" in node.get_interfaces()), None
-        ))
-        if not Atspi.EditableText.set_text_contents(entry, "searchmarker"):
-            raise RuntimeError("Could not enter the search pattern")
-        subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid),
-                        "windowfocus", "key", "ctrl+Return"], check=True, timeout=10)
+        search("searchmarker")
+        wait_for("the text line, PDF page, and Office paragraph", process, all_formats_shown)
+        search("Office searchmarker")
+        wait_for("only the Office match", process, only_office_shown)
+        search("absentmarker")
+        wait_for("the empty results page", process, empty_state_shown)
+        search("searchmarker")
+        wait_for("all three matches after an empty search", process, all_formats_shown)
+        print(f"Four searches passed ({language}): text line 3, PDF page 2, DOCX paragraph, and empty results.")
 
-        def results_shown():
-            labels = [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.LABEL]
-            visible = " ".join(label for label in labels if label)
-            return (all(name in labels for name in ("notes.txt", "paper.pdf", "letter.docx", "Office searchmarker"))
-                    and "decoy.txt" not in labels
-                    and re.search(r"\b3\s*:\s*Text searchmarker", visible)
-                    and re.search(r"\b2\s*:\s*PDF searchmarker", visible))
-
-        wait_for("the text line, PDF page, and Office match", process, results_shown)
-        print("Installed Clapgrep found notes.txt line 3, paper.pdf page 2, and the matching DOCX paragraph.")
+        extension = Path(os.environ["XDG_DATA_HOME"]) / "nautilus-python/extensions/clapgrep.py"
+        original = Path(__file__).resolve().parents[2] / "assets/integrations/nautilus/clapgrep.py"
+        if extension.exists():
+            raise RuntimeError(f"Unexpected preexisting extension: {extension}")
+        subprocess.run(["gapplication", "action", "de.leopoldluley.Clapgrep", "preferences"], check=True, timeout=10)
+        click("Nautilus")
+        wait_for("the installed Nautilus extension", process, extension.is_file)
+        if extension.read_bytes() != original.read_bytes():
+            raise RuntimeError("The installed Nautilus extension differs from the packaged source")
+        click("Nautilus")
+        wait_for("removal of the Nautilus extension", process, lambda: not extension.exists())
+        print("Preferences installed and removed the Nautilus extension under XDG_DATA_HOME.")
     except Exception:
-        print("Accessible window content:", file=sys.stderr)
-        for node in walk(app):
-            print(f"  {node.get_role_name()}: {node.get_name()!r}", file=sys.stderr)
+        if process.poll() is None:
+            print("Accessible window content:", file=sys.stderr)
+            for node in walk(app):
+                value = Atspi.Text.get_text(node, 0, -1) if "EditableText" in node.get_interfaces() else ""
+                print(f"  {node.get_role_name()}: {node.get_name()!r} {value!r}", file=sys.stderr)
         raise
 
 
 def main():
     folder = Path(sys.argv[1])
     create_documents(folder)
-    process = subprocess.Popen(["/usr/local/bin/clapgrep", str(folder)])
+    process = subprocess.Popen(["/usr/local/bin/clapgrep", str(folder)], cwd=folder.parent,
+                               env={**os.environ, "G_DEBUG": "fatal-criticals", "RUST_LOG": "clapgrep_gnome=debug"})
     try:
-        check_window(process)
+        check_window(process, sys.argv[2])
         subprocess.run(["gapplication", "action", "de.leopoldluley.Clapgrep", "quit"], check=True, timeout=10)
         if process.wait(timeout=10) != 0:
             raise RuntimeError("Clapgrep did not exit successfully")

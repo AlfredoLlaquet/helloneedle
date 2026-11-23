@@ -53,11 +53,13 @@ jobs:
             test -r "$share/icons/hicolor/scalable/apps/$app.svg"
             grep -Eq '^inode/directory=([^;]+;)*de\.leopoldluley\.Clapgrep\.desktop(;|$)' \
               "$share/applications/mimeinfo.cache"
-            for TZ in UTC Europe/Madrid; do
-              export TZ
-              printf '\nTesting in %s\n' "$TZ"
+            run_tests() {
+              export TZ="$1"
+              printf '\nTesting in %s (%s)\n' "$TZ" "$2"
               meson test -C build --print-errorlogs --timeout-multiplier 20
-              sh tests/freebsd/installed-search.sh
-            done
+              sh tests/freebsd/installed-search.sh "$2"
+            }
+            run_tests UTC en
+            run_tests Europe/Madrid es
             CHECK_INSTALL
 # CG4FBS END
