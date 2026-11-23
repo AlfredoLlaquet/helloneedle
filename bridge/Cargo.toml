@@ -1,0 +1,28 @@
+[package]
+name = "helloneedle-worker"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+description = "Portable document search and preview worker for Hello Needle"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+encoding_rs = "0.8"
+glob = "0.3"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+# Later ignore releases use let chains unavailable in the supported Rust 1.85.
+ignore = "=0.4.23"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+quick-xml = "0.38"
+roxmltree = "0.20"
+scraper = { version = "0.24", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }

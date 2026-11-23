@@ -1,0 +1,5 @@
+# Hello Needle native components
+
+This build of Hello Needle @PROJECT_VERSION@ targets @CMAKE_SYSTEM_NAME@ on @CMAKE_SYSTEM_PROCESSOR@. It links to the platform's Qt @qt_version@ Core, Gui and Widgets libraries. Qt and the native Qt platform plugin are installed separately. Poppler supplies the separate `pdftotext` and `pdftoppm` commands. Antiword supplies the `antiword` command and its character maps.
+
+The application and worker are distributed under GPL-3.0-or-later. The original Clapgrep attribution appears in `NOTICE.md`. The Rust code linked into the worker is inventoried in `LICENSES/rust/DEPENDENCIES.md`. Individual notices and license texts are available offline under `LICENSES/`. Each CI binary has a companion source archive containing the exact project revision, the build scripts and its vendored Rust dependencies. Platform-managed packages provide the separate libraries, plugins and converters with their own licenses, source packages and update procedures.

@@ -1,92 +1,65 @@
 # Hello Needle
 
-Hello Needle is a desktop application in development for finding words and phrases inside local files. Select a folder, enter a phrase, and choose a result to see the passage in its document. The project targets **FreeBSD, Windows, Linux, and macOS**. It builds on the Rust search engine from Leopold Luley’s Clapgrep and will have a new C++ interface built with Qt 6 Widgets.
+Hello Needle finds a word or phrase inside a folder of documents and opens each match in context. The desktop application uses Qt 6 Widgets on FreeBSD, Windows, Linux, and macOS. Its Rust search worker builds on the file traversal and matching code in Leopold Luley’s Clapgrep.
 
-Created by **Alfredo Llaquet-Alsina**. **Programmed by ChatGPT.** [Clapgrep and other credits](NOTICE.md)
+Created by **Alfredo Llaquet-Alsina**. **Programmed by ChatGPT.** [Origins and credits](NOTICE.md)
 
-## Project status
+## Find a passage
 
-The November 23, 2026 project layout is published. The executable available from this source tree is the inherited **Clapgrep** application. Its FreeBSD build, installation, and graphical searches have been verified. The new Hello Needle interface and installers are planned. Each platform will get its own installation and update instructions when a build has been tested there. [Project record and milestones](AGENTS.md) · [Verified FreeBSD baseline](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45205259209)
+1. Choose a folder, type a phrase, and press **Enter**. Matches appear grouped by file. Search options include regular expressions, case sensitivity, a path pattern, filenames, hidden files, and ignored files.
+2. Select a passage. The preview shows the occurrence in its document. Use **Open original** to open the file in the desktop’s usual application. Search and preview read the files in place.
+3. For Markdown or HTML, choose **Document** to search formatted text or **Source** to search markup. A Document search for `The Latest Batch` finds `The **Latest** Batch` across the bold text. A Source search for `<strong>` finds the HTML tag itself.
 
-## Interface languages
+**English and Spanish** are the two interface languages. On first launch, Spanish regional locales select Spanish. Other locales use English. The Language menu lets you choose. The interface language places no restriction on the text or filenames being searched.
 
-Hello Needle’s interface will be available in **English and Spanish**. In the current source tree, English is the original interface text and Spanish is the sole translation catalog. Document searches accept text in any language that the chosen file reader can decode.
+**En español.** Hello Needle busca palabras y frases en los documentos de una carpeta. Escribe una expresión, pulsa **Intro** y selecciona una coincidencia para leer el pasaje. En HTML y Markdown, el modo **Documento** busca el texto visible y el modo **Fuente** busca las etiquetas o el marcado. El menú **Idioma** permite elegir español o inglés.
 
-**En español.** Hello Needle permitirá buscar una frase en una carpeta y leer el pasaje en su contexto. La interfaz estará disponible en español e inglés. Los primeros formatos de documentos de texto con formato serán DOCX (Word) y ODT (LibreOffice Writer). Por ahora, las instrucciones de compilación de esta página corresponden a la aplicación de referencia, Clapgrep para FreeBSD.
+## Documents
 
-## Finding a passage
-
-In the planned interface, the folder and query sit above two resizable panes. The left pane groups matches by file and shows an excerpt for each one. Selecting an excerpt opens the right pane at that occurrence. Someone searching a folder of meeting notes can read the paragraph containing a decision, see which file it came from, and open the original in its usual application.
-
-| Documents | Planned search and preview |
+| Format | Where a match opens |
 | --- | --- |
-| Plain text | Search the text, jump to the matching line, and highlight the occurrence among the surrounding lines. |
-| HTML and Markdown | **Document** searches the readable text and shows a formatted preview. **Source** searches the saved markup and opens the matching source line. |
-| PDF | Show the matching page and highlight the passage. Zoom, fit the page, and move to neighboring pages for context. The initial scope covers PDFs with a text layer. |
-| Word and OpenDocument Text | Treat Word **DOCX** and LibreOffice/OpenOffice Writer **ODT** as first-class formats. Show matching text in its paragraph, with surrounding paragraphs and headings. |
-| Spreadsheets and presentations | Cover Excel **XLSX**, Calc **ODS**, PowerPoint **PPTX**, and Impress **ODP**. Use a sheet and cell, or a slide, to identify where a passage occurs. |
-| Other word-processor files | The compatibility plan includes Rich Text Format **RTF**, older binary Word **DOC**, and flat OpenDocument Text **FODT**. Their readers and format-specific tests are later work. |
+| Plain text and text-based source files | The original line with the selected occurrence highlighted. Reads UTF-8 and byte-order-marked UTF-16. |
+| HTML and Markdown | A formatted block or a source line. Document mode joins text across inline formatting and ignores scripts. Previews use local content. |
+| PDF with a text layer | The matching page, with a highlight over the matching words, zoom, fit, and page navigation. |
+| Word DOCX, OpenDocument Text ODT and flat FODT | The matching paragraph, heading, or table passage with nearby text. Character formatting can divide a word across multiple runs in the source file. The search joins those runs. |
+| Excel XLSX and OpenDocument Spreadsheet ODS | The sheet and cell address. Text and stored values are searchable. |
+| PowerPoint PPTX and OpenDocument Presentation ODP | The slide containing the matching passage. |
+| RTF and legacy binary Word DOC | Readable text by paragraph. RTF is decoded in the worker. Older Word files use the separately installed antiword converter. |
 
-For example, a Document search for `The Latest Batch` should find `The **Latest** Batch` in Markdown and `The <strong>Latest</strong> Batch` in HTML. A Source search for `<strong>` should take you to the tag. The document preview will read local content with scripts and network requests disabled. Searching and previewing leave the original files untouched.
+Office previews show a passage in reading order. Pagination and layout can differ from the originating word processor. Scanned PDFs need a text layer for searching. Protected, unsupported, damaged, and oversized documents can produce a per-file diagnostic while the folder search continues.
 
-## Build the current FreeBSD reference
+## Install and run
 
-The following commands build **Clapgrep**, which is the working reference during Hello Needle development. The recorded test system was FreeBSD 15.1-RELEASE-p6 on amd64.
+The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-worker` automatically. The FreeBSD/Linux package-manager builds, Windows UCRT64 archive, and macOS app use separately installed Qt and document tools. Binary artifacts are accompanied by the exact project source, locked Rust dependencies, checksums, and the build inventory. [Native builds, GUI screenshots, and artifacts](https://github.com/AlfredoLlaquet/helloneedle/actions) · [Build and packaging record](AGENTS.md#build-install-and-package)
 
-1. In a root shell, install the dependencies.
+| Platform | Runtime and package |
+| --- | --- |
+| FreeBSD | Install the `.pkg` with `pkg add ./<package>.pkg` on a compatible FreeBSD release. Qt 6, Poppler utilities, and antiword come from FreeBSD packages. Launch **Hello Needle** from the desktop or run `helloneedle`. |
+| Linux | On the matching Ubuntu release, install the downloaded `.deb` with `sudo apt install ./<package>.deb`. A graphical desktop entry and the `helloneedle` command are installed. Other distributions can build from source. |
+| Windows | Use the MSYS2 **UCRT64** build. Install the runtime packages listed below, extract the Windows archive, and launch the included application with the UCRT64 runtime on its search path. |
+| macOS | Install the matching Homebrew runtime packages below, extract **Hello Needle.app**, and open it in Finder. The app uses the Homebrew installation for its architecture. |
 
-   ```sh
-   pkg install git rust meson ninja pkgconf gettext-tools gtk4 libadwaita \
-       gtksourceview5 poppler-glib blueprint-compiler desktop-file-utils AppStream
-   ```
+### Build from source
 
-2. As the desktop account, clone the repository and compile from its top-level directory. The first build downloads the Rust dependencies recorded in `Cargo.lock`.
+The desktop build requires a C++17 compiler, Qt 6 Widgets, CMake 3.21 or newer, Rust/Cargo 1.85 or newer, Python 3.9 or newer, and a build tool such as Ninja. The native GUI audit also uses Qt Test. PDF extraction and display require `pdftotext` and `pdftoppm`. The legacy DOC decoder needs antiword and its character maps.
 
-   ```sh
-   git clone https://github.com/AlfredoLlaquet/helloneedle.git
-   cd helloneedle
-   meson setup build --prefix=/usr/local
-   CARGO_BUILD_JOBS=2 meson compile -C build
-   ```
+| Build host | Example dependencies |
+| --- | --- |
+| FreeBSD | `pkg install git cmake ninja rust python3 qt6-base poppler-utils antiword` |
+| Ubuntu | `sudo apt install git build-essential cmake ninja-build python3 qt6-base-dev qt6-qpa-plugins poppler-utils antiword`, plus current stable Rust/Cargo |
+| Windows, MSYS2 UCRT64 shell | `pacman -S --needed git mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python,qt6-base,poppler,antiword}` |
+| macOS | Xcode Command Line Tools and `brew install cmake ninja rust python qtbase poppler antiword` |
 
-3. From the same directory, install with root privileges. Launch from a graphical session as the desktop account.
-
-   ```sh
-   su root -c 'meson install -C build --no-rebuild'
-   clapgrep
-   ```
-
-To update an existing checkout of this project, start in the directory that contains `meson.build`. A clone made under the former name can keep its local directory. Set its remote once with `git remote set-url origin https://github.com/AlfredoLlaquet/helloneedle.git`.
+From a source checkout or the unpacked corresponding source archive, run the following commands. Qt and the converters must be discoverable in the selected platform environment.
 
 ```sh
-git switch main
-git pull --ff-only origin main
-CARGO_BUILD_JOBS=2 meson compile -C build
-su root -c 'meson install -C build --no-rebuild'
+cmake -S . -B build-qt -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-qt --parallel
+cmake --install build-qt --prefix "$PWD/stage"
 ```
 
-## Verify the reference build
+On FreeBSD and Linux the resulting command is `stage/bin/helloneedle`. Windows produces `stage/bin/helloneedle.exe`. On macOS the installed application is `stage/Hello Needle.app`. A folder can also be supplied as a positional argument. The developer record covers installed tests, package removal, appearance checks, component sources, and the retained Clapgrep reference. [Project record](AGENTS.md)
 
-From the repository root, the desktop account can run the Rust workspace tests and validate the desktop entry and AppStream metadata. Meson prints any failures and records the full output in `build/meson-logs/testlog.txt`.
+## License
 
-```sh
-CARGO_BUILD_JOBS=2 meson test -C build --print-errorlogs --timeout-multiplier 20
-```
-
-For the installed-application tests, install these additional packages as root.
-
-```sh
-pkg install xorg-vfbserver dbus python3 py312-atspi py312-pycairo dejavu xdotool
-dbus-uuidgen --ensure
-```
-
-Run the two commands below as the desktop account. They open an isolated X11 session for each language, exercise four consecutive searches, and check the optional Nautilus extension in a temporary data directory. The fixtures contain a plain-text match on line 3, a PDF match on page 2, and a DOCX paragraph. [FreeBSD workflow](.github/workflows/freebsd.yml)
-
-```sh
-TZ=UTC sh tests/freebsd/installed-search.sh en
-TZ=Europe/Madrid sh tests/freebsd/installed-search.sh es
-```
-
-## License and origins
-
-Hello Needle is licensed under the **GNU General Public License, version 3 or later** (`GPL-3.0-or-later`) and is supplied without warranty as set out in that license. The original Clapgrep work is by Leopold Luley and its contributors. Individual third-party files retain their own notices and license terms. Each future binary release is to include its notices and offer the complete corresponding source for that build. [Full license](LICENSE) · [Attribution and component notices](NOTICE.md) · [Original Clapgrep project](https://github.com/luleyleo/clapgrep)
+Hello Needle is distributed under **GPL-3.0-or-later**. The original Clapgrep code is by Leopold Luley and its contributors. Embedded components, dependencies, and individual assets retain their own licenses and credits. The application’s About dialog and installed notices provide offline access to these texts. [GNU GPL](LICENSE) · [Attribution and license inventory](NOTICE.md) · [Original Clapgrep](https://github.com/luleyleo/clapgrep)

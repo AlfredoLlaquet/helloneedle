@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hello Needle
+Comment=Search inside local documents
+Comment[es]=Buscar en el contenido de documentos locales
+Exec=helloneedle
+Icon=helloneedle
+Terminal=false
+Categories=Utility;FileTools;
+Keywords=search;files;documents;

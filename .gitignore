@@ -7,3 +7,9 @@ flatpak-build/
 samples/
 
 gnome/src/build.rs
+
+__pycache__/
+*.py[cod]
+/build-qt*/
+/native-out/
+/gui-evidence/

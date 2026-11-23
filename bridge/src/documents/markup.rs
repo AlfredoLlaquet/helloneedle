@@ -1,0 +1,467 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! CommonMark and HTML share one searchable projection and one preview sanitizer.
+
+use super::MAX_BLOCKS;
+use crate::{Block, MAX_TEXT_BYTES};
+use anyhow::{ensure, Result};
+use pulldown_cmark::{html, Options, Parser};
+use scraper::{node::Node, ElementRef, Html, Selector};
+use serde_json::json;
+use std::fmt;
+
+const MAX_MARKUP: usize = 8 * 1024 * 1024;
+const MAX_ELEMENTS: usize = 100_000;
+const MAX_DEPTH: usize = 128;
+
+pub(super) fn declared_encoding(bytes: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    // HTML places encoding declarations within its first 1024 bytes. The declaration itself is ASCII.
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+    let document = Html::parse_document(&head);
+    let meta = Selector::parse("meta").ok()?;
+    for tag in document.select(&meta) {
+        let value = tag.value();
+        let label = value.attr("charset").or_else(|| {
+            if !value
+                .attr("http-equiv")?
+                .eq_ignore_ascii_case("content-type")
+            {
+                return None;
+            }
+            value.attr("content")?.split(';').find_map(|part| {
+                let (name, label) = part.split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("charset")
+                    .then(|| label.trim().trim_matches(['\'', '"']))
+            })
+        });
+        if let Some(encoding) = label.and_then(|s| encoding_rs::Encoding::for_label(s.as_bytes())) {
+            return Some(encoding);
+        }
+    }
+    None
+}
+
+// CommonMark can expand short input (e.g. nested lists) into substantially more HTML.
+struct HtmlBuffer(String);
+
+impl fmt::Write for HtmlBuffer {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        if self.0.len().saturating_add(value.len()) > MAX_TEXT_BYTES {
+            return Err(fmt::Error);
+        }
+        self.0.push_str(value);
+        Ok(())
+    }
+}
+
+pub(super) fn project(source: &str, markdown: bool) -> Result<Vec<Block>> {
+    ensure!(
+        source.len() <= MAX_MARKUP,
+        "too_large: markup exceeds parser limit"
+    );
+    let converted;
+    let html_source = if markdown {
+        let options =
+            Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+        let mut output = HtmlBuffer(String::new());
+        html::write_html_fmt(&mut output, Parser::new_ext(source, options))
+            .map_err(|_| anyhow::anyhow!("too_large: rendered Markdown exceeds limit"))?;
+        converted = output.0;
+        &converted
+    } else {
+        source
+    };
+    ensure!(
+        html_source
+            .bytes()
+            .filter(|&b| b == b'<')
+            .take(MAX_ELEMENTS + 1)
+            .count()
+            <= MAX_ELEMENTS,
+        "too_large: too many markup elements"
+    );
+    // Parsing constructs a tree in memory; it never opens the URLs in the input.
+    let document = Html::parse_document(html_source);
+    let mut projection = Projection::default();
+    projection.element(document.root_element(), 0)?;
+    projection.finish()?;
+    Ok(projection.blocks)
+}
+
+#[derive(Clone, Copy, Default)]
+enum Role {
+    #[default]
+    Paragraph,
+    Heading(u8),
+    Quote,
+    Item,
+    Pre,
+    Cell,
+}
+
+impl Role {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Paragraph => "paragraph",
+            Self::Heading(_) => "heading",
+            Self::Quote => "quote",
+            Self::Item => "listItem",
+            Self::Pre => "code",
+            Self::Cell => "cell",
+        }
+    }
+}
+
+#[derive(Default)]
+struct Projection {
+    blocks: Vec<Block>,
+    bytes: usize,
+    role: Role,
+    text: String,
+    fragment: String,
+    // Only these fixed tags are ever copied to the preview. No input attributes survive.
+    styles: Vec<&'static str>,
+    emitted_styles: Vec<&'static str>,
+    pending_space: bool,
+    // None denotes an unordered list; Some stores the next ordinal for an ordered list.
+    lists: Vec<Option<i64>>,
+    marker: Option<String>,
+}
+
+impl Projection {
+    fn element(&mut self, element: ElementRef<'_>, depth: usize) -> Result<()> {
+        ensure!(depth < MAX_DEPTH, "too_large: markup nesting exceeds limit");
+        let value = element.value();
+        let name = value.name();
+        if is_hidden(&element)
+            || matches!(
+                name,
+                "head"
+                    | "script"
+                    | "style"
+                    | "template"
+                    | "noscript"
+                    | "iframe"
+                    | "frame"
+                    | "object"
+                    | "embed"
+                    | "canvas"
+                    | "svg"
+                    | "math"
+                    | "audio"
+                    | "video"
+                    | "input"
+                    | "select"
+                    | "textarea"
+                    | "button"
+            )
+        {
+            return Ok(());
+        }
+        match name {
+            "br" => {
+                self.pending_space = false;
+                self.sync_styles();
+                self.text.push('\n');
+                self.fragment.push_str("<br/>");
+                return Ok(());
+            }
+            "hr" => return self.finish(),
+            // Only the human-readable alternate text belongs in this offline preview.
+            "img" => {
+                if let Some(alt) = value.attr("alt") {
+                    self.append(alt);
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        let role = match name {
+            "h1" => Some(Role::Heading(1)),
+            "h2" => Some(Role::Heading(2)),
+            "h3" => Some(Role::Heading(3)),
+            "h4" => Some(Role::Heading(4)),
+            "h5" => Some(Role::Heading(5)),
+            "h6" => Some(Role::Heading(6)),
+            "blockquote" => Some(Role::Quote),
+            "pre" => Some(Role::Pre),
+            "li" => Some(Role::Item),
+            "td" | "th" => Some(Role::Cell),
+            _ => None,
+        };
+        let boundary = role.is_some()
+            || matches!(
+                name,
+                "p" | "div"
+                    | "section"
+                    | "article"
+                    | "aside"
+                    | "header"
+                    | "footer"
+                    | "main"
+                    | "nav"
+                    | "address"
+                    | "figure"
+                    | "figcaption"
+                    | "table"
+                    | "tr"
+                    | "caption"
+                    | "ol"
+                    | "ul"
+                    | "dl"
+                    | "dt"
+                    | "dd"
+                    | "summary"
+                    | "details"
+            );
+        if boundary {
+            self.finish()?;
+        }
+        let old_role = self.role;
+        if let Some(role) = role {
+            self.role = role;
+        }
+        let mut old_marker = None;
+        if name == "ol" {
+            self.lists.push(Some(
+                value
+                    .attr("start")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1),
+            ));
+        } else if name == "ul" {
+            self.lists.push(None);
+        } else if name == "li" {
+            let marker = if let Some(Some(next)) = self.lists.last_mut() {
+                let ordinal = value
+                    .attr("value")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(*next);
+                *next = ordinal.saturating_add(1);
+                format!("{ordinal}. ")
+            } else {
+                "• ".into()
+            };
+            old_marker = self.marker.replace(marker);
+        }
+        let style = match name {
+            "b" | "strong" | "th" => Some("strong"),
+            "em" | "i" => Some("em"),
+            "a" | "u" => Some("u"),
+            "s" | "del" | "strike" => Some("s"),
+            "sup" => Some("sup"),
+            "sub" => Some("sub"),
+            "code" | "kbd" | "samp" | "tt" => Some("code"),
+            _ => None,
+        };
+        if let Some(style) = style {
+            self.styles.push(style);
+        }
+        for child in element.children() {
+            if let Node::Text(text) = child.value() {
+                self.append(text);
+            } else if let Some(child) = ElementRef::wrap(child) {
+                self.element(child, depth + 1)?;
+            }
+        }
+        if style.is_some() {
+            self.styles.pop();
+        }
+        if boundary {
+            self.finish()?;
+        }
+        if name == "li" {
+            self.marker = old_marker;
+        }
+        if matches!(name, "ul" | "ol") {
+            self.lists.pop();
+        }
+        self.role = old_role;
+        Ok(())
+    }
+
+    fn append(&mut self, input: &str) {
+        if input.is_empty() {
+            return;
+        }
+        let normalized;
+        let text = if matches!(self.role, Role::Pre) {
+            input
+        } else {
+            let mut output = String::with_capacity(input.len());
+            for ch in input.chars() {
+                if matches!(ch, ' ' | '\t' | '\r' | '\n' | '\u{c}' | '\u{a0}') {
+                    self.pending_space = true;
+                } else {
+                    if self.pending_space
+                        && (!output.is_empty() || !self.text.is_empty())
+                        && !(output.ends_with('\n')
+                            || output.is_empty() && self.text.ends_with('\n'))
+                    {
+                        output.push(' ');
+                    }
+                    self.pending_space = false;
+                    output.push(ch);
+                }
+            }
+            normalized = output;
+            &normalized
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.sync_styles();
+        self.text.push_str(text);
+        escape_into(&mut self.fragment, text);
+    }
+
+    fn sync_styles(&mut self) {
+        let common = self
+            .emitted_styles
+            .iter()
+            .zip(&self.styles)
+            .take_while(|(a, b)| a == b)
+            .count();
+        for tag in self.emitted_styles.drain(common..).rev() {
+            self.fragment.push_str("</");
+            self.fragment.push_str(tag);
+            self.fragment.push('>');
+        }
+        for &tag in &self.styles[common..] {
+            self.fragment.push('<');
+            self.fragment.push_str(tag);
+            self.fragment.push('>');
+            self.emitted_styles.push(tag);
+        }
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.pending_space = false;
+        if self.text.is_empty() {
+            return Ok(());
+        }
+        ensure!(
+            self.blocks.len() < MAX_BLOCKS,
+            "too_large: too many document blocks"
+        );
+        for tag in self.emitted_styles.drain(..).rev() {
+            self.fragment.push_str("</");
+            self.fragment.push_str(tag);
+            self.fragment.push('>');
+        }
+        let index = self.blocks.len();
+        let mut location = json!({"index":index, "role":self.role.name()});
+        let mut text = std::mem::take(&mut self.text);
+        let mut fragment = std::mem::take(&mut self.fragment);
+        let html = match self.role {
+            Role::Heading(level) => {
+                location["level"] = json!(level);
+                format!("<h{level}>{fragment}</h{level}>")
+            }
+            Role::Item => {
+                if let Some(marker) = self.marker.take() {
+                    text.insert_str(0, &marker);
+                    fragment.insert_str(0, &marker);
+                }
+                format!("<p style=\"margin-left: 18px\">{fragment}</p>")
+            }
+            Role::Quote => format!("<blockquote><p>{fragment}</p></blockquote>"),
+            Role::Pre => format!("<pre>{fragment}</pre>"),
+            _ => format!("<p>{fragment}</p>"),
+        };
+        self.bytes = self
+            .bytes
+            .saturating_add(text.len())
+            .saturating_add(html.len());
+        ensure!(
+            self.bytes <= MAX_TEXT_BYTES,
+            "too_large: formatted text exceeds limit"
+        );
+        self.blocks
+            .push(Block::new(text, location, format!("Block {}", index + 1)).with_html(html));
+        Ok(())
+    }
+}
+
+fn is_hidden(element: &ElementRef<'_>) -> bool {
+    let value = element.value();
+    if value.attr("hidden").is_some()
+        || value
+            .attr("aria-hidden")
+            .is_some_and(|s| s.eq_ignore_ascii_case("true"))
+    {
+        return true;
+    }
+    value.attr("style").is_some_and(|style| {
+        style.split(';').any(|declaration| {
+            let Some((property, value)) = declaration.split_once(':') else {
+                return false;
+            };
+            let value = value.split('!').next().unwrap_or("").trim();
+            property.trim().eq_ignore_ascii_case("display") && value.eq_ignore_ascii_case("none")
+                || property.trim().eq_ignore_ascii_case("visibility")
+                    && value.eq_ignore_ascii_case("hidden")
+        })
+    })
+}
+
+fn escape_into(output: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            _ => output.push(ch),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projects_nested_text_and_discards_active_resources() {
+        let html = r#"<html><head><title>private title</title></head><body><h2>The <em>Latest</em>&nbsp;Batch</h2>
+            <p>Welcome <a href="file:///secret">reader</a>, <img src="https://invalid/" alt="a cat">.
+            <span hidden>bad</span><b style="display: none !important">bad</b></p>
+            <script>alert(1)</script><iframe src="bad">bad</iframe><p>&lt;script&gt;</p></body></html>"#;
+        let blocks = project(html, false).unwrap();
+        let text: Vec<_> = blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            text,
+            ["The Latest Batch", "Welcome reader, a cat.", "<script>"]
+        );
+        assert_eq!(blocks[0].location["level"], 2);
+        let html: String = blocks.iter().filter_map(|b| b.html.as_deref()).collect();
+        assert!(html.contains("<em>"));
+        assert!(!html.contains("href") && !html.contains("<script") && !html.contains("<img"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn preserves_markdown_blocks_and_preformatted_code() {
+        let blocks = project("# The **Latest** Batch\n\n> quoted *word*\n\n3. [x](https://invalid/)\n4. y\n\n```\n  a < b\n   c\n```\n", true).unwrap();
+        let text: Vec<_> = blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            text,
+            [
+                "The Latest Batch",
+                "quoted word",
+                "3. x",
+                "4. y",
+                "  a < b\n   c\n"
+            ]
+        );
+        assert_eq!(blocks[1].location["role"], "quote");
+        assert!(blocks[4].html.as_ref().unwrap().contains("&lt;"));
+    }
+
+    #[test]
+    fn breaks_stay_inside_their_block() {
+        let blocks = project("<p>one<br>   two</p><p>three</p>", false).unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "one\ntwo");
+    }
+}
