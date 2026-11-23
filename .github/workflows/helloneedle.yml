@@ -20,10 +20,13 @@ jobs:
         run: |
           set -eu
           mkdir -p native-out/source
-          python3 tools/source_bundle.py --output "native-out/source/helloneedle-source-$GITHUB_SHA.tar.gz"
+          version=$(cargo metadata --no-deps --locked --format-version 1 --manifest-path bridge/Cargo.toml |
+            jq -er '.packages[] | select(.name == "helloneedle-worker") | .version')
+          archive="native-out/source/helloneedle-$version-source-$GITHUB_SHA.tar.gz"
+          python3 tools/source_bundle.py --output "$archive"
           (cd native-out/source && sha256sum *.tar.gz > SHA256SUMS)
           unpack=$(mktemp -d)
-          tar -xzf "native-out/source/helloneedle-source-$GITHUB_SHA.tar.gz" -C "$unpack"
+          tar -xzf "$archive" -C "$unpack"
           cd "$unpack"/helloneedle-*
           test "$(cat SOURCE-REVISION.txt)" = "$GITHUB_SHA"
           CARGO_HOME="$unpack/cargo-home" cargo test --offline --locked --manifest-path bridge/Cargo.toml
@@ -89,24 +92,23 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      HOMEBREW_NO_AUTO_UPDATE: '1'
       QT_QPA_PLATFORM: cocoa
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Install Homebrew dependencies
-        if: matrix.arch == 'arm64'
+      - name: Install MacPorts dependencies
         run: |
-          brew install qtbase qttranslations poppler antiword ninja
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix qtbase)" >> "$GITHUB_ENV"
-      - name: Install MacPorts dependencies on Intel
-        if: matrix.arch == 'x86_64'
-        run: |
-          installer=MacPorts-2.12.7-15-Sequoia.pkg
+          case "$(sw_vers -productVersion | cut -d. -f1)" in
+            15) installer=MacPorts-2.12.7-15-Sequoia.pkg
+                checksum=87b2e87ed7adc4aca947b42eb7ff991614cc0edfccb486237f2bbc75f28aae63 ;;
+            26) installer=MacPorts-2.12.7-26-Tahoe.pkg
+                checksum=588f14ccd3c6199559a070a80e6cddd6871721a08cc434775bf54378fd667910 ;;
+            *) echo 'A MacPorts installer for this release is required.' >&2; exit 1 ;;
+          esac
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/$installer" \
             "https://github.com/macports/macports-base/releases/download/v2.12.7/$installer"
-          (cd "$RUNNER_TEMP" && echo "87b2e87ed7adc4aca947b42eb7ff991614cc0edfccb486237f2bbc75f28aae63  $installer" | shasum -a 256 -c)
+          (cd "$RUNNER_TEMP" && echo "$checksum  $installer" | shasum -a 256 -c)
           pkgutil --check-signature "$RUNNER_TEMP/$installer"
           sudo installer -pkg "$RUNNER_TEMP/$installer" -target /
           sudo /opt/local/bin/port -N install qt6-qtbase qt6-qttranslations poppler antiword ninja

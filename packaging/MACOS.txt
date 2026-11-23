@@ -1,29 +1,32 @@
 Hello Needle for macOS
 
-Choose the arm64 archive for Apple Silicon or the x86_64 archive for
-an Intel Mac. On Apple Silicon, install Homebrew from https://brew.sh/
-in its standard /opt/homebrew prefix, then run in Terminal
+Choose the archive for the Mac's operating system and processor.
 
-    brew install qtbase qttranslations poppler antiword
+    macOS 26 Tahoe, Apple Silicon     arm64
+    macOS 15 Sequoia, Intel           x86_64
 
-On Intel, install MacPorts for the matching macOS release from
-https://www.macports.org/install.php in its standard /opt/local prefix,
-then run in Terminal
+Both builds use MacPorts in its standard /opt/local location. If the
+Xcode Command Line Tools are missing, install them from Terminal.
 
-    sudo port install qt6-qtbase qt6-qttranslations poppler antiword
+    xcode-select --install
+
+Download the MacPorts installer for Tahoe or Sequoia to match the
+installed system. https://www.macports.org/install.php
+
+Install the four runtime packages from Terminal.
+
+    sudo /opt/local/bin/port install qt6-qtbase qt6-qttranslations poppler antiword
 
 Extract the ZIP, move Hello Needle.app to Applications, and open it in
-Finder. Qt provides the native interface, Poppler handles PDFs, and
-antiword reads legacy .doc files. Running the app requires no compiler,
-Rust installation, or Python installation. The app uses the selected package
-manager's libraries and commands, including when started from Finder.
+Finder. Qt provides the interface and its standard translations. Poppler
+handles PDFs. The included worker reads Word 97–2003 documents directly,
+and antiword handles earlier Word formats.
 
-This CI build has an ad hoc code signature. It has no Apple Developer ID
-signature or notarization. A Mac's security policy can require approval
-or prevent launching this build.
+This build carries an ad hoc code signature. Gatekeeper can require
+approval or block launch according to the Mac's security policy.
 
 To update, quit Hello Needle and replace the app. To remove it, delete
-the app from Applications. The package manager maintains the runtime packages.
+the app from Applications. MacPorts maintains the runtime packages.
 The app's Contents/Resources/licenses folder holds the component notices,
 installed package versions and source revision. The Actions run supplies
 the matching source archive.

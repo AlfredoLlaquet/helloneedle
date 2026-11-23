@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import errno
 import hashlib
 import json
 import os
@@ -170,14 +171,26 @@ def verify_native_names(worker, root):
     if os.name != "posix":
         return
     root.mkdir()
-    raw = os.fsencode(root) + b"/example_\xff.txt"
-    with open(raw, "wb") as output:
+    raw = os.path.join(os.fsencode(root), b"example_\xff.txt")
+    case = "non-UTF-8"
+    try:
+        output = open(raw, "xb")
+    except OSError as error:
+        if error.errno != errno.EILSEQ:
+            raise
+        case = "decomposed Unicode (filesystem rejected the non-UTF-8 name)"
+        raw = os.fsencode(root / "example_cafe\u0301.txt")
+        output = open(raw, "xb")
+    with output:
         output.write(b"File identity survives a complete round trip.")
     hits, errors = search(worker, root, "identity")
-    assert not errors and len(hits) == 1
-    assert base64.b64decode(hits[0]["pathBytes"]) == raw
-    validate_occurrence(worker, hits[0], "identity")
-    print("Non-UTF-8 Unix filename round trip passed")
+    assert not errors and len(hits) == 1, (hits, errors)
+    hit = hits[0]
+    returned = base64.b64decode(hit["pathBytes"], validate=True)
+    assert hit["pathEncoding"] == "unix" and returned == raw, (hit, raw)
+    # Give preview only the native path bytes so the display path cannot mask a failure.
+    validate_occurrence(worker, {**hit, "path": ""}, "identity")
+    print(f"Search and preview preserved {case} filename bytes {os.path.basename(returned)!r}")
 
 
 def main():

@@ -28,7 +28,6 @@
 #include <QSettings>
 #include <QSet>
 #include <QStyle>
-#include <QStandardPaths>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextBrowser>
@@ -430,11 +429,7 @@ private slots:
     void wordAndOfficePreviews()
     {
         QVERIFY(submit("Needle"));
-        QStringList docs = {"letter.docx", "letter.odt", "letter.fodt", "letter.rtf"};
-        const bool hasAntiword = !QStandardPaths::findExecutable("antiword").isEmpty();
-        evidence["legacyWordGuiTested"] = hasAntiword;
-        if (hasAntiword)
-            docs.append("sample.doc");
+        const QStringList docs = {"letter.docx", "letter.odt", "letter.fodt", "letter.rtf", "sample.doc"};
         for (const auto &name : docs) {
             QVERIFY2(selectHit(name), qPrintable("Missing hit in " + name));
             QVERIFY2(until([&] { return !selectedText("Needle").isNull() &&
@@ -442,6 +437,8 @@ private slots:
                        preview->toPlainText().contains("After the passage."); }), qPrintable(name));
             if (name == "letter.odt")
                 VERIFY_OK(guiqa::saveView(*window, "word-preview"));
+            if (name == "sample.doc")
+                evidence["legacyWordGuiTested"] = true;
             // Force an intervening state to prevent a previous file's identical
             // text satisfying the assertion while its replacement is still loading.
             QVERIFY(selectHit("notes.txt"));
@@ -601,6 +598,8 @@ private slots:
     void helpAndCredits()
     {
         VERIFY_OK(captureModal(control<QAction>("aboutAction"), "about"));
+        QVERIFY(!QCoreApplication::applicationVersion().isEmpty());
+        QVERIFY(modalText.contains("Hello Needle " + QCoreApplication::applicationVersion()));
         QVERIFY(modalText.contains("Alfredo Llaquet-Alsina"));
         QVERIFY(modalText.contains("ChatGPT"));
         VERIFY_OK(captureModal(control<QAction>("licensesAction"), "licenses"));

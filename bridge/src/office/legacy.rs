@@ -27,7 +27,7 @@ fn executable() -> Option<PathBuf> {
     let dirs = env::split_paths(&path).filter(|dir| dir.is_absolute());
     #[cfg(target_os = "macos")]
     let dirs =
-        dirs.chain(["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"].map(PathBuf::from));
+        dirs.chain(["/opt/local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
     bundled
         .into_iter()
         .chain(dirs.map(|dir| dir.join(name)))

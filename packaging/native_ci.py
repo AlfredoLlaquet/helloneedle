@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Build a dependency-managed Hello Needle package or test a separately installed copy."""
 import argparse
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -83,9 +82,14 @@ def system_packages():
     if SYSTEM == "FreeBSD":
         return output(["pkg", "query", "%n %v", "qt6-base", "qt6-translations", "poppler-utils", "antiword"])
     if SYSTEM == "Darwin":
-        if Path(shutil.which("pdftotext") or "").is_relative_to("/opt/local"):
-            return output(["/opt/local/bin/port", "-q", "installed", "qt6-qtbase", "qt6-qttranslations", "poppler", "antiword"])
-        return output(["brew", "list", "--versions", "qtbase", "qttranslations", "poppler", "antiword"])
+        ports = ["qt6-qtbase", "qt6-qttranslations", "poppler", "antiword"]
+        installed = output(["/opt/local/bin/port", "-q", "installed", *ports])
+        # MacPorts keeps inactive revisions after upgrades. Record the versions in use.
+        active = {line.split()[0]: line.strip() for line in installed.splitlines() if line.endswith(" (active)")}
+        missing = [name for name in ports if name not in active]
+        if missing:
+            raise SystemExit("MacPorts has no active installation for " + ", ".join(missing))
+        return "\n".join(active[name] for name in ports)
     managed = ["mingw-w64-ucrt-x86_64-" + name for name in ("qt6-base", "qt6-translations", "poppler", "antiword")]
     # MSYS2 has both combined and split GCC runtime packages. Ask about the actual DLLs.
     runtime = output(["pacman", "-Qqo", "/ucrt64/bin/libgcc_s_seh-1.dll", "/ucrt64/bin/libstdc++-6.dll",
@@ -210,11 +214,13 @@ def build(args):
     run(["cmake", "--install", work, "--prefix", prefix])
     bindir, docs = layout(prefix)
     revision = output(["git", "rev-parse", "HEAD"], cwd=ROOT)
-    timestamp = int(output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=ROOT))
     cache = (work / "CMakeCache.txt").read_text(encoding="utf-8")
     version = next(line.partition("=")[2] for line in cache.splitlines() if line.startswith("CMAKE_PROJECT_VERSION:"))
-    version += ".g" + datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y%m%d%H%M%S")
+    worker_version = output([bindir / ("helloneedle-worker" + EXE), "--version"])
+    if worker_version != f"helloneedle-worker {version}":
+        raise SystemExit(f"Worker reports {worker_version!r} for desktop version {version}.")
     metadata = environment(revision, bindir)
+    metadata["version"] = version
     metadata["application_icon"] = packaged_icons(work, prefix)
     (docs / "BUILD-ENVIRONMENT.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     if SYSTEM == "Linux":
@@ -260,7 +266,7 @@ def verify(args):
     if not (docs / "LICENSES/rust/DEPENDENCIES.md").is_file():
         raise SystemExit("Missing Rust inventory.")
     (evidence / "host.json").write_text(json.dumps(
-        {"commit": current, "host": os_description(), "machine": platform.machine(),
+        {"commit": current, "version": build_env["version"], "host": os_description(), "machine": platform.machine(),
          "platform": platform.platform(), "packages": system_packages().splitlines(), "converters": converter_versions()},
         indent=2) + "\n", encoding="utf-8")
     checks = {

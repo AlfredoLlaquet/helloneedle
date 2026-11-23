@@ -1,4 +1,4 @@
-# Hello Needle
+# Hello Needle 1.0.0
 
 <img src="desktop/qt/helloneedle.png" alt="Hello Needle’s astonished cow" width="96" height="96">
 
@@ -39,7 +39,7 @@ The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-wor
 | FreeBSD | Install the `.pkg` with `pkg add ./<package>.pkg` on a compatible FreeBSD release. Qt 6, Poppler utilities, and antiword come from FreeBSD packages. Launch **Hello Needle** from the desktop or run `helloneedle`. |
 | Linux | On the matching Ubuntu release, install the downloaded `.deb` with `sudo apt install ./<package>.deb`. A graphical desktop entry and the `helloneedle` command are installed. Other distributions can build from source. |
 | Windows | Use the MSYS2 **UCRT64** build. Install the MSYS2 runtime packages, extract the archive, and double-click **Hello Needle.exe** at its top level. [Windows runtime instructions](packaging/WINDOWS.txt) |
-| macOS | Install the runtime for the package architecture, Homebrew on Apple Silicon or MacPorts on Intel. Extract **Hello Needle.app** and open it in Finder. Both builds carry an ad hoc signature. [macOS runtime instructions](packaging/MACOS.txt) |
+| macOS | Choose the `arm64` archive for macOS 26 Tahoe on Apple Silicon or `x86_64` for macOS 15 Sequoia on Intel. Both use MacPorts in `/opt/local`. Install the runtime packages, extract **Hello Needle.app**, and open it in Finder. Both bundles carry an ad hoc signature. [macOS runtime instructions](packaging/MACOS.txt) |
 
 ### Build from source
 
@@ -50,10 +50,9 @@ The desktop build requires a C++17 compiler, Qt 6.4 or newer with Qt Widgets, CM
 | FreeBSD | `pkg install git cmake ninja rust python3 qt6-base qt6-translations poppler-utils antiword` |
 | Ubuntu | `sudo apt install git build-essential cmake ninja-build python3 qt6-base-dev qt6-qpa-plugins qt6-translations-l10n poppler-utils antiword`, plus current stable Rust/Cargo |
 | Windows, MSYS2 UCRT64 shell | `pacman -S --needed git mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python,qt6-base,qt6-translations,poppler,antiword}` |
-| macOS, Apple Silicon | Xcode Command Line Tools and `brew install cmake ninja rust python qtbase qttranslations poppler antiword` |
-| macOS, Intel | Xcode Command Line Tools, CMake, Ninja, Python 3, Rust/Cargo, and the MacPorts runtime packages `sudo port install qt6-qtbase qt6-qttranslations poppler antiword` |
+| macOS, Apple Silicon or Intel | Install the Xcode Command Line Tools and MacPorts for the installed macOS release, then run `sudo /opt/local/bin/port install cmake ninja rust cargo python313 qt6-qtbase qt6-qttranslations poppler antiword`. [MacPorts installation](https://www.macports.org/install.php) |
 
-From a source checkout or the unpacked corresponding source archive, run the following commands. Qt and the converters must be discoverable in the selected platform environment.
+From a source checkout or the unpacked corresponding source archive, run the following commands. Qt and the converters must be discoverable in the selected platform environment. On macOS, set `export CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local` before configuring so CMake finds the MacPorts Qt installation.
 
 ```sh
 cmake -S . -B build-qt -G Ninja -DCMAKE_BUILD_TYPE=Release
