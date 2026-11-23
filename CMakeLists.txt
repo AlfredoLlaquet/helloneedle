@@ -89,6 +89,7 @@ else()
         # This small launcher can display installation help before Qt is available.
         add_executable(helloneedle-launcher WIN32 packaging/windows-launcher.c "${CMAKE_BINARY_DIR}/windows.rc")
         set_target_properties(helloneedle-launcher PROPERTIES OUTPUT_NAME "Hello Needle" AUTOMOC OFF AUTOUIC OFF)
+        target_compile_definitions(helloneedle-launcher PRIVATE $<$<COMPILE_LANGUAGE:RC>:HELLO_NEEDLE_LAUNCHER>)
         target_link_libraries(helloneedle-launcher PRIVATE user32)
         add_dependencies(helloneedle-launcher helloneedle-icons)
         set_source_files_properties("${CMAKE_BINARY_DIR}/windows.rc" TARGET_DIRECTORY helloneedle helloneedle-launcher

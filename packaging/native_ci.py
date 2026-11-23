@@ -126,7 +126,7 @@ def os_description():
                  if line.startswith("PRETTY_NAME=")), platform.platform())
 
 
-def environment(archived, bindir):
+def environment(revision, version, bindir):
     commands = {"Linux": ["ldd"], "FreeBSD": ["ldd"], "Darwin": ["otool", "-L"],
                 "Windows": ["objdump", "-p"]}
     libraries = {}
@@ -141,10 +141,10 @@ def environment(archived, bindir):
                 raise SystemExit("The Windows launcher must start using Windows system libraries alone.")
         libraries[binary.name] = linked
     return {
-        "commit": archived, "platform": platform.platform(), "operating_system": os_description(),
+        "commit": revision, "version": version, "platform": platform.platform(), "operating_system": os_description(),
         "machine": platform.machine(), "managed_packages": system_packages().splitlines(),
         "runtime_linkage": libraries, "converters": converter_versions(),
-        "corresponding_source": f"helloneedle-source-{archived}.tar.gz",
+        "corresponding_source": f"helloneedle-{version}-source-{revision}.tar.gz",
     }
 
 
@@ -219,8 +219,7 @@ def build(args):
     worker_version = output([bindir / ("helloneedle-worker" + EXE), "--version"])
     if worker_version != f"helloneedle-worker {version}":
         raise SystemExit(f"Worker reports {worker_version!r} for desktop version {version}.")
-    metadata = environment(revision, bindir)
-    metadata["version"] = version
+    metadata = environment(revision, version, bindir)
     metadata["application_icon"] = packaged_icons(work, prefix)
     (docs / "BUILD-ENVIRONMENT.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     if SYSTEM == "Linux":

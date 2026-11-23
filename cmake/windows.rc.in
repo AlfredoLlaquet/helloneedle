@@ -13,7 +13,11 @@ BEGIN
       VALUE "FileDescription", "Hello Needle\0"
       VALUE "Comments", "Created by Alfredo Llaquet-Alsina. Programmed by ChatGPT.\0"
       VALUE "FileVersion", "@PROJECT_VERSION@\0"
+#ifdef HELLO_NEEDLE_LAUNCHER
+      VALUE "OriginalFilename", "Hello Needle.exe\0"
+#else
       VALUE "OriginalFilename", "helloneedle.exe\0"
+#endif
       VALUE "ProductName", "Hello Needle\0"
       VALUE "ProductVersion", "@PROJECT_VERSION@\0"
     END
