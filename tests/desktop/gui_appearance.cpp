@@ -311,7 +311,7 @@ bool makeReviewSheet(const QString &root)
 {
     struct Panel {QString name; QString state;};
     const QList<Panel> panels = {
-        {"system", "first-launch"}, {"en-light-100", "first-launch"},
+        {"system", "first-launch"}, {"system", "icon-grid"},
         {"en-dark-100", "first-launch"}, {"es-light-100", "options-narrow"},
         {"es-dark-150", "options-narrow"}, {"en-light-150", "search-results"},
         {"es-dark-100", "word-preview"}, {"en-dark-100", "pdf-preview"}
@@ -329,7 +329,7 @@ bool makeReviewSheet(const QString &root)
         const auto &panel = panels.at(i);
         const QString rel = panel.name + "/" + panel.state;
         QImage source;
-        if (panel.name == "system") {
+        if (panel.name == "system" && panel.state == "first-launch") {
             source.load(QDir(root).filePath(panel.name + "/first-launch-frame.png"));
             if (source.isNull())
                 source.load(QDir(root).filePath(panel.name + "/first-launch-native.png"));

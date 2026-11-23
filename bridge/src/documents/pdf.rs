@@ -65,7 +65,7 @@ fn poppler_tool() -> PathBuf {
             std::env::split_paths(&path).any(|directory| directory.join(name).is_file())
         });
         if !on_path {
-            for directory in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            for directory in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] {
                 let installed = Path::new(directory).join(name);
                 if installed.is_file() {
                     return installed;

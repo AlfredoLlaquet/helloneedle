@@ -49,6 +49,33 @@ def files_under(directory):
     return sorted(path for path in directory.rglob("*") if path.is_file())
 
 
+def packaged_icons(work, prefix):
+    sizes = (16, 32, 48, 64, 128, 256)
+    if SYSTEM == "Windows":
+        # windres preserves the original PNG frames in each executable's icon resource.
+        containers = [prefix / "Hello Needle.exe", prefix / "bin/helloneedle.exe"]
+    elif SYSTEM == "Darwin":
+        containers = [prefix / "Hello Needle.app/Contents/Resources/helloneedle.icns"]
+        sizes = (16, 32, 64, 128, 256, 512, 1024)
+    else:
+        containers = []
+        sizes = (16, 22, 24, 32, 48, 64, 96, 128, 256, 512, 1024)
+    contents = {path: path.read_bytes() for path in containers}
+    fingerprints = {}
+    for size in sizes:
+        png = (work / "icons" / f"{size}.png").read_bytes()
+        if contents:
+            for path, binary in contents.items():
+                if png not in binary:
+                    raise SystemExit(f"Missing {size}px application icon in {path}")
+        else:
+            installed = prefix / f"share/icons/hicolor/{size}x{size}/apps/helloneedle.png"
+            if installed.read_bytes() != png:
+                raise SystemExit(f"Installed application icon differs: {installed}")
+        fingerprints[str(size)] = hashlib.sha256(png).hexdigest()
+    return {"master_sha256": sha256(ROOT / "desktop/qt/helloneedle.png"), "frames_sha256": fingerprints}
+
+
 def system_packages():
     if SYSTEM == "Linux":
         return output(["dpkg-query", "-W", "-f=${binary:Package} ${Version}\\n",
@@ -56,6 +83,8 @@ def system_packages():
     if SYSTEM == "FreeBSD":
         return output(["pkg", "query", "%n %v", "qt6-base", "qt6-translations", "poppler-utils", "antiword"])
     if SYSTEM == "Darwin":
+        if Path(shutil.which("pdftotext") or "").is_relative_to("/opt/local"):
+            return output(["/opt/local/bin/port", "-q", "installed", "qt6-qtbase", "qt6-qttranslations", "poppler", "antiword"])
         return output(["brew", "list", "--versions", "qtbase", "qttranslations", "poppler", "antiword"])
     return output(["pacman", "-Q", *["mingw-w64-ucrt-x86_64-" + name
                                      for name in ["qt6-base", "qt6-translations", "poppler", "antiword", "gcc-libs"]]])
@@ -182,7 +211,9 @@ def build(args):
     cache = (work / "CMakeCache.txt").read_text(encoding="utf-8")
     version = next(line.partition("=")[2] for line in cache.splitlines() if line.startswith("CMAKE_PROJECT_VERSION:"))
     version += ".g" + datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y%m%d%H%M%S")
-    (docs / "BUILD-ENVIRONMENT.json").write_text(json.dumps(environment(revision, bindir), indent=2) + "\n", encoding="utf-8")
+    metadata = environment(revision, bindir)
+    metadata["application_icon"] = packaged_icons(work, prefix)
+    (docs / "BUILD-ENVIRONMENT.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     if SYSTEM == "Linux":
         archive = debian(stage, bindir, dist, version)
     elif SYSTEM == "FreeBSD":

@@ -3,6 +3,7 @@
 #include "language.h"
 #include "mainwindow.h"
 #include "gui_appearance.h"
+#include "gui_icon.h"
 #include "picker_native.h"
 
 #include <QAbstractButton>
@@ -262,7 +263,10 @@ private slots:
         QVERIFY(window->windowTitle().contains("Hello Needle"));
         QCOMPARE(results->topLevelItemCount(), 0);
         QVERIFY(query->text().isEmpty());
-        QVERIFY(!window->windowIcon().pixmap(32, 32).isNull());
+        QJsonObject icon;
+        const auto iconCheck = guiqa::verifyApplicationIcon(window->windowIcon(), icon);
+        evidence["applicationIcon"] = icon;
+        VERIFY_OK(iconCheck);
         auto *options = control<QToolButton>("optionsButton");
         QVERIFY(options);
         QCOMPARE(options->arrowType(), Qt::RightArrow);

@@ -14,10 +14,29 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 if(APPLE)
-    # Homebrew supplies the Qt frameworks used by this non-bundled build.
+    # Retain the system package manager's Qt library paths in the installed app.
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 endif()
 add_subdirectory(desktop/qt)
+
+set(icon_master "${PROJECT_SOURCE_DIR}/desktop/qt/helloneedle.png")
+set(icon_dir "${PROJECT_BINARY_DIR}/icons")
+set(icon_sizes 16 22 24 32 48 64 96 128 256 512 1024)
+set(icon_files "${icon_dir}/helloneedle.ico" "${icon_dir}/helloneedle.icns")
+foreach(size IN LISTS icon_sizes)
+    list(APPEND icon_files "${icon_dir}/${size}.png")
+endforeach()
+add_executable(helloneedle-icon-sizes EXCLUDE_FROM_ALL packaging/scale-icon.cpp)
+set_target_properties(helloneedle-icon-sizes PROPERTIES AUTOMOC OFF AUTOUIC OFF)
+target_link_libraries(helloneedle-icon-sizes PRIVATE Qt6::Gui)
+add_custom_command(OUTPUT ${icon_files}
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${icon_dir}"
+    COMMAND helloneedle-icon-sizes "${icon_master}" "${icon_dir}" ${icon_sizes}
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/packaging/icons.py" "${icon_dir}"
+    DEPENDS helloneedle-icon-sizes "${icon_master}" packaging/icons.py
+    VERBATIM)
+add_custom_target(helloneedle-icons ALL DEPENDS ${icon_files})
+add_dependencies(helloneedle helloneedle-icons)
 
 set(worker_name "helloneedle-worker${CMAKE_EXECUTABLE_SUFFIX}")
 set(worker_dir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
@@ -57,7 +76,7 @@ if(APPLE)
     set(app_docdir "${contents}/Resources/licenses")
     configure_file(cmake/Info.plist.in Info.plist @ONLY)
     install(FILES "${CMAKE_BINARY_DIR}/Info.plist" DESTINATION "${contents}")
-    install(FILES packaging/helloneedle.icns DESTINATION "${contents}/Resources")
+    install(FILES "${icon_dir}/helloneedle.icns" DESTINATION "${contents}/Resources")
     install(FILES packaging/MACOS.txt DESTINATION "${contents}/Resources")
 else()
     set(app_bindir "${CMAKE_INSTALL_BINDIR}")
@@ -71,6 +90,9 @@ else()
         add_executable(helloneedle-launcher WIN32 packaging/windows-launcher.c "${CMAKE_BINARY_DIR}/windows.rc")
         set_target_properties(helloneedle-launcher PROPERTIES OUTPUT_NAME "Hello Needle" AUTOMOC OFF AUTOUIC OFF)
         target_link_libraries(helloneedle-launcher PRIVATE user32)
+        add_dependencies(helloneedle-launcher helloneedle-icons)
+        set_source_files_properties("${CMAKE_BINARY_DIR}/windows.rc" TARGET_DIRECTORY helloneedle helloneedle-launcher
+                PROPERTIES OBJECT_DEPENDS "${icon_dir}/helloneedle.ico")
         if(MINGW)
             target_compile_options(helloneedle-launcher PRIVATE $<$<COMPILE_LANGUAGE:C>:-finput-charset=UTF-8>)
             target_link_options(helloneedle-launcher PRIVATE -municode)
@@ -82,8 +104,10 @@ else()
     else()
         install(FILES packaging/org.thecrumbs.HelloNeedle.desktop
                 DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
-        install(FILES desktop/qt/helloneedle.svg
-                DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+        foreach(size IN LISTS icon_sizes)
+            install(FILES "${icon_dir}/${size}.png" RENAME helloneedle.png
+                    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps")
+        endforeach()
     endif()
 endif()
 

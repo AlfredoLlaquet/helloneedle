@@ -100,7 +100,8 @@ def run_case(tester, worker, docs, settings, directory, spec, plugin):
     # Explicit X11 on Unix enables testing under Xvfb without an ambient Wayland session.
     env.update(QT_QPA_PLATFORM=plugin, QT_SCALE_FACTOR=factor,
                HELLONEEDLE_WORKER=str(worker), HN_QA_LANGUAGE=language, HN_QA_APPEARANCE=appearance,
-               HN_QA_DOCUMENTS=str(docs), HN_QA_SETTINGS=str(settings), HN_QA_OUTPUT=str(directory))
+               HN_QA_DOCUMENTS=str(docs), HN_QA_SETTINGS=str(settings), HN_QA_OUTPUT=str(directory),
+               HN_QA_MASTER_ICON=str(Path(__file__).resolve().parents[2] / "desktop/qt/helloneedle.png"))
     if plugin == "offscreen":
         env["HN_QA_SUPPLEMENTARY"] = "1"
         slots = [s for s in slots if s != "nativeDirectoryPicker"]

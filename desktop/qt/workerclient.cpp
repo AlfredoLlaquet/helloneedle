@@ -31,7 +31,7 @@ QString findTool(const QString &name)
     const QDir app(QCoreApplication::applicationDirPath());
     QStringList directories{app.path(), app.filePath("../libexec/helloneedle"), app.filePath("../libexec")};
 #ifdef Q_OS_MACOS
-    directories << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
+    directories << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin") << QStringLiteral("/opt/local/bin");
 #endif
     for (const auto &directory : directories) {
         const QFileInfo candidate(QDir(directory).filePath(file));

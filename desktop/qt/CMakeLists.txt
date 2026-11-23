@@ -12,6 +12,9 @@ if(MSVC)
     target_compile_options(helloneedle-desktop PRIVATE /utf-8)
 endif()
 
+qt_add_resources(helloneedle-desktop hello_needle_art
+    PREFIX "/art" FILES helloneedle.png)
+
 # Link the texts into the application as well as installing the distribution's
 # notices. The license dialog is available even in an unpackaged build tree.
 get_filename_component(repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)

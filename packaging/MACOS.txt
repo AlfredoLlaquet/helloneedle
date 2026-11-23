@@ -1,22 +1,29 @@
-Hello Needle for macOS on Apple Silicon
+Hello Needle for macOS
 
-Install Homebrew from https://brew.sh/ using its standard Apple Silicon
-prefix, /opt/homebrew. Install the runtime packages in Terminal with
+Choose the arm64 archive for Apple Silicon or the x86_64 archive for
+an Intel Mac. On Apple Silicon, install Homebrew from https://brew.sh/
+in its standard /opt/homebrew prefix, then run in Terminal
 
     brew install qtbase qttranslations poppler antiword
+
+On Intel, install MacPorts for the matching macOS release from
+https://www.macports.org/install.php in its standard /opt/local prefix,
+then run in Terminal
+
+    sudo port install qt6-qtbase qt6-qttranslations poppler antiword
 
 Extract the ZIP, move Hello Needle.app to Applications, and open it in
 Finder. Qt provides the native interface, Poppler handles PDFs, and
 antiword reads legacy .doc files. Running the app requires no compiler,
-Rust installation, or Python installation. The app uses Homebrew libraries
-and commands, including when started from Finder.
+Rust installation, or Python installation. The app uses the selected package
+manager's libraries and commands, including when started from Finder.
 
 This CI build has an ad hoc code signature. It has no Apple Developer ID
 signature or notarization. A Mac's security policy can require approval
 or prevent launching this build.
 
 To update, quit Hello Needle and replace the app. To remove it, delete
-the app from Applications. Homebrew manages the runtime packages separately.
+the app from Applications. The package manager maintains the runtime packages.
 The app's Contents/Resources/licenses folder holds the component notices,
 installed package versions and source revision. The Actions run supplies
 the matching source archive.

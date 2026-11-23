@@ -331,20 +331,30 @@ fn recognized_errors_and_expansion_limits_are_distinct() {
 #[test]
 fn real_word_97_document_through_installed_decoder() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/desktop/fixtures/sample.doc");
-    match extract(&path, "doc") {
-        Ok(Some(doc)) => {
-            let block = doc
-                .blocks
-                .iter()
-                .find(|b| b.text.contains("Needle in the margin."))
-                .unwrap();
-            assert!(block.location["paragraph"].as_u64().unwrap() > 1);
+    let folder =
+        std::env::temp_dir().join(format!("Hello Needle archivo 文字 {}", std::process::id()));
+    fs::create_dir(&folder).unwrap();
+    let spaced = folder.join("-writing sample.doc");
+    fs::copy(&path, &spaced).unwrap();
+    let documents = [extract(&path, "doc"), extract(&spaced, "doc")];
+    fs::remove_file(&spaced).unwrap();
+    fs::remove_dir(&folder).unwrap();
+    for result in documents {
+        match result {
+            Ok(Some(doc)) => {
+                let block = doc
+                    .blocks
+                    .iter()
+                    .find(|b| b.text.contains("Needle in the margin."))
+                    .unwrap();
+                assert!(block.location["paragraph"].as_u64().unwrap() > 1);
+            }
+            Err(e) if e.to_string() == "missing_decoder: antiword" => {
+                // Native packaging jobs install antiword and exercise the successful path.
+                eprintln!("optional antiword executable absent");
+            }
+            other => panic!("binary Word fixture: {other:?}"),
         }
-        Err(e) if e.to_string() == "missing_decoder: antiword" => {
-            // Native packaging jobs install antiword and exercise the successful path.
-            eprintln!("optional antiword executable absent");
-        }
-        other => panic!("binary Word fixture: {other:?}"),
     }
 }
 
