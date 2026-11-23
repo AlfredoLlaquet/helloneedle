@@ -87,8 +87,13 @@ def check_window(process, language):
         ), None))
 
     def focus_window():
-        subprocess.run(["xdotool", "search", "--sync", "--onlyvisible", "--pid", str(process.pid),
-                        "windowfocus", "--sync"], check=True, timeout=10)
+        # PID-only searches must end before the next xdotool command.
+        window = subprocess.check_output(
+            ["xdotool", "search", "--sync", "--onlyvisible", "--limit", "1", "--pid", str(process.pid)],
+            text=True, timeout=10,
+        ).strip()
+        subprocess.run(["xdotool", "windowfocus", "--sync", window], check=True, timeout=10)
+        return window
 
     def press(key):
         # A separate command delivers native XTEST events to the focused window.
@@ -104,8 +109,7 @@ def check_window(process, language):
 
     def toggle_nautilus(position):
         row = named_control("Nautilus", "Component")
-        focus_window()
-        window = subprocess.check_output(["xdotool", "getwindowfocus", "-f"], text=True, timeout=10).strip()
+        window = focus_window()
         previous = None
 
         def settled_bounds():
