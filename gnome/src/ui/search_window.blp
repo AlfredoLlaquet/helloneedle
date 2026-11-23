@@ -80,7 +80,11 @@ template $ClapgrepSearchWindow: Adw.ApplicationWindow {
                   activated => $on_search_path_row_activated() swapped;
 
                   [suffix]
-                  Adw.ButtonContent {
+                  // CG4FBS BEGIN — This icon belongs to an action row, which has no GtkButton ancestor.
+                  //                   Adw.ButtonContent {
+                  // CG4FBS REPLACEMENT
+                  Image {
+                  // CG4FBS END
                     icon-name: "search-folder-symbolic";
                     margin-end: 8;
                   }

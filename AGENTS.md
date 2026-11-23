@@ -56,6 +56,8 @@ Keep coverage for these behaviors when integrating upstream changes.
 
 - The installed `clapgrep` executable opens a GTK window and accepts a search folder. Its desktop entry and application resources work from the installation prefix.
 - A search finds known matches in plain text, PDF, and Office files. Check the matching file and its line or page where the format supplies one. Include a file without the search term.
+- Exercise successive short searches in one window. Append each match on the GTK main context before processing the completion message, so a fast search displays its results. A new search must clear the previous results, including when the new query has no matches.
+- On a native desktop, the optional Nautilus integration uses the account’s XDG data directory. The search-folder row must open without GTK critical errors.
 - The desktop-entry and AppStream metadata checks run alongside the Cargo workspace tests. Use a virtual X11 display and fresh per-user XDG settings for the graphical checks.
 
 Build and install once per VM run. Reuse that installation for testing in `UTC` and `Europe/Madrid`, with fresh settings for each zone. Record which checks used a virtual display and which desktop sessions received additional manual testing.

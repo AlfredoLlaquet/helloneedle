@@ -10,24 +10,29 @@ use clapgrep_core::{SearchEngine, SearchFlags, SearchMessage, SearchParameters};
 use gettextrs::gettext;
 use glib::subclass::InitializingObject;
 use glib::Object;
+// CG4FBS BEGIN — Import the document-portal types in the Linux-only function.
+// use gtk::{
+//     gio::{self, Cancellable, FileQueryInfoFlags},
+//     glib::{self, clone},
+//     prelude::*,
+//     CompositeTemplate, FileDialog, StringList,
+// };
+// use std::{
+//     cell::{Cell, RefCell},
+//     path::{Path, PathBuf},
+// };
+// CG4FBS REPLACEMENT
 use gtk::{
-    // CG4FBS BEGIN — The document-portal query flags are only used in the Linux path formatter.
-    //     gio::{self, Cancellable, FileQueryInfoFlags},
-    // CG4FBS REPLACEMENT
     gio::{self, Cancellable},
-    // CG4FBS END
     glib::{self, clone},
     prelude::*,
     CompositeTemplate, FileDialog, StringList,
 };
 use std::{
     cell::{Cell, RefCell},
-    // CG4FBS BEGIN — Path is only used in the Linux path formatter.
-    //     path::{Path, PathBuf},
-    // CG4FBS REPLACEMENT
     path::PathBuf,
-    // CG4FBS END
 };
+// CG4FBS END
 
 glib::wrapper! {
     pub struct SearchWindow(ObjectSubclass<SearchWindowImp>)
@@ -277,11 +282,15 @@ impl SearchWindowImp {
                         SearchMessage::Result(result) => {
                             app.set_searched_files(app.searched_files() + 1);
                             if !result.is_empty() {
-                                let app = app.clone();
-                                glib::idle_add_local_once(move || {
-                                    let imp = app.imp();
-                                    imp.results.append(result);
-                                });
+                                // CG4FBS BEGIN — Apply each result before the main context handles search completion.
+                                //                                 let app = app.clone();
+                                //                                 glib::idle_add_local_once(move || {
+                                //                                     let imp = app.imp();
+                                //                                     imp.results.append(result);
+                                //                                 });
+                                // CG4FBS REPLACEMENT
+                                imp.results.append(result);
+                                // CG4FBS END
                             }
                         }
                         SearchMessage::Error(error) => {

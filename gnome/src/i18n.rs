@@ -14,6 +14,11 @@ pub fn setup_gettext() {
     }
 
     if let Err(error) = text_domain.init() {
+        // CG4FBS BEGIN ADDITION — English is the source language and has no translation catalog.
+        if matches!(&error, gettextrs::TextDomainError::TranslationNotFound(lang) if lang == "en") {
+            return;
+        }
+        // CG4FBS END
         log::error!("Failed to setup gettext: {error}");
     };
 }
