@@ -58,10 +58,20 @@ impl PreferencesDialogImp {}
 
 impl PreferencesDialogImp {
     fn connect_nautilus_integration_toggle(&self) {
-        // TODO: This should use `glib::user_data_dir()`, but that doesn't work inside of Flatpak.
-        let nautilus_extension_path = glib::home_dir()
-            .join(".local/share")
-            .join("nautilus-python/extensions/clapgrep.py");
+        // CG4FBS BEGIN — Native Nautilus uses the user's XDG data directory on FreeBSD.
+        //         // TODO: This should use `glib::user_data_dir()`, but that doesn't work inside of Flatpak.
+        //         let nautilus_extension_path = glib::home_dir()
+        //             .join(".local/share")
+        //             .join("nautilus-python/extensions/clapgrep.py");
+        // CG4FBS REPLACEMENT
+        let data_dir = if cfg!(target_os = "freebsd") {
+            glib::user_data_dir()
+        } else {
+            // Flatpak needs the host Nautilus extension directory.
+            glib::home_dir().join(".local/share")
+        };
+        let nautilus_extension_path = data_dir.join("nautilus-python/extensions/clapgrep.py");
+        // CG4FBS END
 
         let is_nautilus_integration_installed = nautilus_extension_path.is_file();
 

@@ -11,14 +11,22 @@ use gettextrs::gettext;
 use glib::subclass::InitializingObject;
 use glib::Object;
 use gtk::{
-    gio::{self, Cancellable, FileQueryInfoFlags},
+    // CG4FBS BEGIN — The document-portal query flags are only used in the Linux path formatter.
+    //     gio::{self, Cancellable, FileQueryInfoFlags},
+    // CG4FBS REPLACEMENT
+    gio::{self, Cancellable},
+    // CG4FBS END
     glib::{self, clone},
     prelude::*,
     CompositeTemplate, FileDialog, StringList,
 };
 use std::{
     cell::{Cell, RefCell},
-    path::{Path, PathBuf},
+    // CG4FBS BEGIN — Path is only used in the Linux path formatter.
+    //     path::{Path, PathBuf},
+    // CG4FBS REPLACEMENT
+    path::PathBuf,
+    // CG4FBS END
 };
 
 glib::wrapper! {
@@ -228,6 +236,10 @@ impl SearchWindowImp {
 
     #[cfg(target_os = "linux")]
     fn display_search_path(value: PathBuf) -> String {
+        // CG4FBS BEGIN ADDITION
+        use gtk::gio::FileQueryInfoFlags;
+        use std::path::Path;
+        // CG4FBS END
         let mut search_path = value;
 
         const HOST_PATH_ATTR: &str = "xattr::document-portal.host-path";

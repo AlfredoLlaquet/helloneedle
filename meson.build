@@ -48,7 +48,11 @@ subdir('locale')
 subdir('assets')
 subdir('gnome')
 
-if build_machine.system() == 'linux'
+# CG4FBS BEGIN — Refresh desktop icons and file associations after a native FreeBSD install.
+# if build_machine.system() == 'linux'
+# CG4FBS REPLACEMENT
+if build_machine.system() in ['linux', 'freebsd']
+# CG4FBS END
   gnome.post_install(
     gtk_update_icon_cache: true,
     update_desktop_database: true,

@@ -1,0 +1,63 @@
+# CG4FBS BEGIN ADDITION — Build the fork and exercise its installed application in FreeBSD.
+name: FreeBSD
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  freebsd:
+    name: Build, install and test on FreeBSD 15.1 amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: '15.1'
+          arch: x86_64
+          mem: '8192'
+          sync: 'no'
+          envs: 'GITHUB_SHA'
+          prepare: |
+            set -eu
+            pkg install -y git rust meson ninja pkgconf gettext-tools gtk4 libadwaita \
+              gtksourceview5 poppler-glib blueprint-compiler desktop-file-utils AppStream \
+              xorg-vfbserver dbus python3 py312-atspi py312-pycairo dejavu xdotool
+            dbus-uuidgen --ensure
+          run: |
+            set -eu
+            freebsd-version -ku
+            uname -m
+            export CARGO_BUILD_JOBS=2
+            pw useradd -n cgbuild -m -s /bin/sh
+            cd /home/cgbuild
+            su cgbuild -c 'git clone https://github.com/AlfredoLlaquet/clapgrep-freebsd.git'
+            cd clapgrep-freebsd
+            su cgbuild -c '
+              set -eu
+              git fetch origin "$GITHUB_SHA"
+              git checkout --detach "$GITHUB_SHA"
+              meson setup build --prefix=/usr/local
+              meson compile -C build
+              git diff --exit-code -- Cargo.lock
+            '
+            meson install -C build --no-rebuild
+
+            su cgbuild -c 'sh -eu' <<'CHECK_INSTALL'
+            test -x /usr/local/bin/clapgrep
+            share=/usr/local/share
+            app=de.leopoldluley.Clapgrep
+            test -r "$share/applications/$app.desktop"
+            test -r "$share/metainfo/$app.metainfo.xml"
+            test -r "$share/icons/hicolor/scalable/apps/$app.svg"
+            grep -Eq '^inode/directory=([^;]+;)*de\.leopoldluley\.Clapgrep\.desktop(;|$)' \
+              "$share/applications/mimeinfo.cache"
+            for TZ in UTC Europe/Madrid; do
+              export TZ
+              printf '\nTesting in %s\n' "$TZ"
+              meson test -C build --print-errorlogs --timeout-multiplier 20
+              sh tests/freebsd/installed-search.sh
+            done
+            CHECK_INSTALL
+# CG4FBS END
