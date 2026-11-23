@@ -101,6 +101,19 @@ function Check-Shortcut([string]$Link, [string]$Target) {
     } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
 }
 
+function Get-ProcessImagePath([Diagnostics.Process]$Process) {
+    try {
+        # Windows can enumerate a process before its executable module is available.
+        $module = $Process.MainModule
+        if ($null -ne $module) { return $module.FileName }
+    } catch [ComponentModel.Win32Exception] {
+        # The loader changed state between enumeration and the module query.
+    } catch [InvalidOperationException] {
+        # The process exited before its executable path became available.
+    }
+    return $null
+}
+
 function Check-ShellLaunch([string]$Link, [string]$DesktopExecutable) {
     if (-not ('HelloNeedleInstaller.ExitStatus' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -132,8 +145,10 @@ namespace HelloNeedleInstaller {
         do {
             if (-not $gui) {
                 foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('helloneedle')) {
-                    if (-not $gui -and (Same-Path $candidate.MainModule.FileName $DesktopExecutable)) {
+                    $imagePath = Get-ProcessImagePath $candidate
+                    if (-not $gui -and (Same-Path $imagePath $DesktopExecutable)) {
                         $gui = $candidate
+                        $guiPath = $imagePath
                         # An enumerated Process does not retain a kernel handle until
                         # requested. Once the PID disappears its ExitCode can be null.
                         $guiHandle = $gui.SafeHandle
@@ -160,14 +175,14 @@ namespace HelloNeedleInstaller {
         }
         $modules = @($loaded.Values | Where-Object { $_ -match '\\(Qt6[^\\]+|qwindows|qmodernwindowsstyle)\.dll$' } | Sort-Object)
         $report.windowTitle = $gui.MainWindowTitle
-        $report.executable = $gui.MainModule.FileName
+        $report.executable = $guiPath
         $report.modules = $modules
         $report.guiPid = $gui.Id
         $launcherPath = Join-Path $directory 'Hello Needle.exe'
         # ShellExecute may return its broker instead of the executable. Only wait
         # for the verified installed launcher, which explicitly returns the GUI status.
         foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('Hello Needle')) {
-            if (-not $launcherProcess -and (Same-Path $candidate.MainModule.FileName $launcherPath)) {
+            if (-not $launcherProcess -and (Same-Path (Get-ProcessImagePath $candidate) $launcherPath)) {
                 $launcherProcess = $candidate
                 $launcherHandle = $launcherProcess.SafeHandle
                 $report.launcherPid = $launcherProcess.Id

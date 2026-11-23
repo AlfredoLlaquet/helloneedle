@@ -20,10 +20,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      INSTALLER_RUN: '45272316926'
-      INSTALLER_SHA: 7f78e7ba20c1cd8d93f9281569e07ef042560f82
-      SETUP_ARTIFACT: '14866650576'
-      DRIVER_ARTIFACT: '14866810412'
+      INSTALLER_RUN: '45285961791'
+      INSTALLER_SHA: f357c30da0a5212f232ee32078d56d90ce67b3d1
+      SETUP_ARTIFACT: '14871199161'
+      DRIVER_ARTIFACT: '14871109311'
       QT_QPA_PLATFORM: windows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -43,8 +43,8 @@ jobs:
           }
           $items = (Invoke-RestMethod "$url/artifacts?per_page=100" -Headers $headers).artifacts
           $pins = @{
-              $env:SETUP_ARTIFACT = @('helloneedle-windows-installer', 'sha256:8a3af2009e609dc0ff36fefc3143b4dd0ed8f6701ac1a2b0d0ae14e7af6b37d5')
-              $env:DRIVER_ARTIFACT = @('helloneedle-windows-x64-test-driver', 'sha256:75cb25ba1ac5ceb9394bace9559e2c4054886e9aa0a74bb85ac65e98face9247')
+              $env:SETUP_ARTIFACT = @('helloneedle-windows-installer', 'sha256:4916f50dbdc7cab3897fbdf085ce99c26289a719976bfca5e31f45629d74490f')
+              $env:DRIVER_ARTIFACT = @('helloneedle-windows-x64-test-driver', 'sha256:ee90d418a96e16e53b95dbb11589c72fceed3c3ce739094c042465e1f6340fa9')
           }
           foreach ($id in $pins.Keys) {
               $item = $items | Where-Object { $_.id -eq [long]$id }
