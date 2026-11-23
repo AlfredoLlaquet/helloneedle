@@ -134,6 +134,11 @@ def unpack(archive, prefix, receipt, arch):
             rel = relative_member(member.name)
             if rel is None or not rel.parts:
                 continue
+            # The target SDK only builds and links the application. OpenSSL's
+            # manual-page aliases differ from their targets only in case, so
+            # they cannot coexist on the standard macOS case-insensitive volume.
+            if ("share", "man") in zip(rel.parts, rel.parts[1:]):
+                continue
             path = prefix / rel
             # No member or symlink may write outside the isolated SDK.
             path.parent.resolve().relative_to(prefix)
