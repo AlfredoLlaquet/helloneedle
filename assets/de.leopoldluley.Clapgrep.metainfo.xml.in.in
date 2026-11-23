@@ -25,10 +25,7 @@
       <caption>Main window in desktop view</caption>
       <image type="source">https://raw.githubusercontent.com/luleyleo/clapgrep/058be9e322d6f5a17ef81798edfe66ee686e223a/assets/screenshot-1.png</image>
     </screenshot>
-    <screenshot type="default">
-      <caption>Preview in desktop view</caption>
-      <image type="source">https://raw.githubusercontent.com/luleyleo/clapgrep/058be9e322d6f5a17ef81798edfe66ee686e223a/assets/screenshot-2.png</image>
-    </screenshot>
+    <!-- Hello Needle, 2026-11-23: the inherited desktop preview contained a third-party lecture slide. -->
     <screenshot type="default">
       <caption>Search interface in mobile view</caption>
       <image type="source">https://raw.githubusercontent.com/luleyleo/clapgrep/058be9e322d6f5a17ef81798edfe66ee686e223a/assets/screenshot-3.png</image>

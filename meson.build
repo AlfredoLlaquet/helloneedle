@@ -48,6 +48,14 @@ subdir('locale')
 subdir('assets')
 subdir('gnome')
 
+# CG4FBS BEGIN ADDITION — Install the license and provenance of the reference application.
+if host_machine.system() == 'freebsd'
+  reference_docdir = datadir / 'doc' / meson.project_name()
+  install_data('LICENSE', 'NOTICE.md', install_dir: reference_docdir)
+  install_subdir('LICENSES', install_dir: reference_docdir)
+endif
+# CG4FBS END
+
 # CG4FBS BEGIN — Refresh desktop icons and file associations after a native FreeBSD install.
 # if build_machine.system() == 'linux'
 # CG4FBS REPLACEMENT

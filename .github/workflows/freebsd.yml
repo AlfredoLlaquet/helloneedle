@@ -18,7 +18,7 @@ jobs:
           arch: x86_64
           mem: '8192'
           sync: 'no'
-          envs: 'GITHUB_SHA'
+          envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA'
           prepare: |
             set -eu
             pkg install -y git rust meson ninja pkgconf gettext-tools gtk4 libadwaita \
@@ -32,8 +32,8 @@ jobs:
             export CARGO_BUILD_JOBS=2
             pw useradd -n cgbuild -m -s /bin/sh
             cd /home/cgbuild
-            su cgbuild -c 'git clone https://github.com/AlfredoLlaquet/clapgrep-freebsd.git'
-            cd clapgrep-freebsd
+            su cgbuild -c 'git clone --no-checkout "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" source'
+            cd source
             su cgbuild -c '
               set -eu
               git fetch origin "$GITHUB_SHA"
@@ -51,6 +51,12 @@ jobs:
             test -r "$share/applications/$app.desktop"
             test -r "$share/metainfo/$app.metainfo.xml"
             test -r "$share/icons/hicolor/scalable/apps/$app.svg"
+            test "$(find "$share/locale" -type f -path "*/LC_MESSAGES/$app.mo")" = \
+              "$share/locale/es/LC_MESSAGES/$app.mo"
+            doc="$share/doc/clapgrep"
+            cmp LICENSE "$doc/LICENSE"
+            cmp NOTICE.md "$doc/NOTICE.md"
+            diff -r LICENSES "$doc/LICENSES"
             grep -Eq '^inode/directory=([^;]+;)*de\.leopoldluley\.Clapgrep\.desktop(;|$)' \
               "$share/applications/mimeinfo.cache"
             result=0

@@ -1,89 +1,96 @@
-# Clapgrep for FreeBSD — Project Purpose and Working Rules
+# Hello Needle project record
 
-> [!IMPORTANT]
-> **Never send any request upstream.** Treat Clapgrep and all of its upstream dependencies as read-only. Never push changes upstream, open an issue or pull request there, ask for a feature, review, or support, or contact upstream maintainers by comment, discussion, email, or private message. This applies to everyone acting on behalf of this project, including automated workflows. Reading documentation and fetching upstream source and tags are part of normal maintenance.
->
-> Keep fixes and proposals in `AlfredoLlaquet/clapgrep-freebsd`. Check the GitHub destination before opening an issue or pull request. For a pull request, the **base repository** must be this fork.
+Hello Needle is an independent desktop document search application by **Alfredo Llaquet-Alsina**. **Programmed by ChatGPT.** Leopold Luley and the Clapgrep contributors wrote the original application from which this project derives. Keep both credits visible and specific to the work they describe. [Attribution](NOTICE.md)
 
-## Purpose and name
+## How to maintain this record
 
-Use the following repository description verbatim.
+This file is the living manual for project decisions and development notes. Update it in the same change as each modification to the repository. Record the affected behavior, controls, file or module responsibilities, licensing, verification, or packaging steps. Replace superseded instructions. Use dates for substantive decisions, evidence for test results, and explicit open questions for choices still under evaluation. The README explains the product and published installation procedures to its users. A license notice or automated test can be the authoritative artifact for its subject and be linked here.
 
-> An independently maintained FreeBSD port of Clapgrep
+This follows the documentation practice of Crumb Writer. Its short maintenance rule points to a detailed manual kept in step with the program. Hello Needle keeps the rule and the manual together here. A new contributor should be able to follow a search from the keyboard through matching and preview, find the source responsible, and reproduce the test. [Crumb Writer maintenance rule](https://github.com/AlfredoLlaquet/crumbwriter/blob/ec92c550babbb52d34b7c4872b3fecc4c1b91d48/AGENTS.md) · [Crumb Writer manual](https://github.com/AlfredoLlaquet/crumbwriter/blob/ec92c550babbb52d34b7c4872b3fecc4c1b91d48/CrumbWriter.txt)
 
-Keep the application name **Clapgrep**. The goal is to build and run the existing graphical document search application natively on FreeBSD. Preserve its Rust search engine, GTK 4 interface, and behavior when searching plain text, PDFs, and Office documents. Keep downstream changes focused so future stable releases are easy to merge. [Upstream Clapgrep](https://github.com/luleyleo/clapgrep)
+## Identity, scope, and starting point
 
-Programmed by **ChatGPT** for Alfredo Llaquet-Alsina.
+- **November 23, 2026.** The repository was renamed from `AlfredoLlaquet/clapgrep-freebsd` to `AlfredoLlaquet/helloneedle`. The public name is **Hello Needle**. Use `helloneedle` for the future command and for repository examples. Give the application its own settings, desktop identity, icons, and package identity so that Clapgrep and Hello Needle can coexist. Keep the original Git history.
+- **Starting source.** Upstream Clapgrep `v26.09` plus the Turkish translation update at `5642bbee94b6684192fa075403222f2d4e2f7559`. The FreeBSD reference at `a88d6100d68c09405abb7f21ff55b3f1afaeb714` added native installation and testing and fixed the ordering of search results, the folder icon, and native Nautilus integration. The older release tags describe Clapgrep. The first Hello Needle release will have its own identity.
+- **This milestone is the project layout.** The published program design calls for C++ and Qt 6 Widgets, the reusable Rust search engine, and shared document handlers on FreeBSD, Windows, Linux, and macOS. The executable in the current tree is still `clapgrep`, built with GTK and Meson. Label measurements, screenshots, fixtures, downloads, and version claims with the program and platform they actually cover.
+- **Project direction.** Maintain Hello Needle in Alfredo’s repository. Fetch Clapgrep changes for comparison as useful, review them individually, and preserve their authorship when adopted. The fork relationship records ancestry. Issues, proposals, and project releases belong here. Upstream contact or a submission to another project requires a separate instruction from Alfredo. When Alfredo says the conversation is discussion only, or introduces a message with “Question:”, answer without changing the project.
 
-## Marking FreeBSD code changes
+## What someone should be able to do
 
-Use one pair of `CG4FBS` markers around each logical block changed for this port. Use the same marker words in every language and the file’s own comment syntax. Add a short reason to the opening marker when it helps explain the change.
+Choose a local folder, enter a phrase, and see matching passages as the folder is searched. Show the folder, query, and active options above a split view. Group results by file in the left pane, with a short excerpt and a meaningful location for each match. Selecting one shows the matching occurrence in a larger preview on the right. Opening the original document is a separate, explicit action. Searching and previewing must leave the source files untouched.
 
-For a replacement, start with `CG4FBS BEGIN`. Immediately below it, reproduce the complete upstream block as comments, preserving its line breaks and indentation. Put `CG4FBS REPLACEMENT` on its own comment line, followed by the active replacement and then `CG4FBS END`. For example, a Meson platform check can be extended as follows.
+Carry forward literal and regular-expression searches, case sensitivity, filename matching, path patterns, and the hidden/ignored-file controls. Distinguish a filename match from a passage in its contents. Give searching, cancellation, no matches, and a file that could not be read distinct states. An unreadable or damaged document must not stop other files from being searched. A new query clears the previous results. Late replies from an earlier query cannot change the current view.
 
-```meson
-# CG4FBS BEGIN — Refresh installed desktop caches on FreeBSD.
-# if build_machine.system() == 'linux'
-# CG4FBS REPLACEMENT
-if build_machine.system() in ['linux', 'freebsd']
-# CG4FBS END
-```
+Use Qt Widgets for a conventional desktop window. Allow keyboard access to the folder chooser, query, options, results, preview, and open-original action. Focus order, visible focus, and light/dark text contrast are part of each platform’s acceptance test. Follow native shortcut conventions on macOS and document the final keys when implemented. Keep source text and match highlighting separate so copying text preserves the original characters.
 
-For an entirely new block, put the active code directly between `CG4FBS BEGIN ADDITION` and `CG4FBS END`. The following example uses Rust comment syntax.
+## Interface languages
 
-```rust
-// CG4FBS BEGIN ADDITION
-#[cfg(target_os = "freebsd")]
-const PLATFORM_NAME: &str = "FreeBSD";
-// CG4FBS END
-```
+**November 23, 2026.** Support exactly English and Spanish in the application interface. English is the source language and fallback. Select Spanish for a Spanish UI locale, including its regional variants. The shipped GTK reference catalog is `locale/es.po` and `locale/LINGUAS` lists `es` alone. The `.pot` file is a translation template. Earlier upstream translations remain available in Git history. Preserve translator credit in the Spanish catalog.
 
-Keep the commented original in sync with the upstream revision used by this fork. When a later release changes that block, refresh the commented copy and review its FreeBSD replacement in the same update.
+For the Qt interface, centralize translatable strings, keep placeholders and plural forms intact, and exercise real dialogs and search results in both languages. Record newly introduced controls in English and Spanish. An unsupported interface locale falls back to English. File names, document text and search patterns can use any script supported by the reader and fonts. Locale selection must not limit which documents are searched or change their contents.
 
-## Following Clapgrep releases
+## Document formats and locations
 
-1. Use `origin` for this fork and `upstream` for `luleyleo/clapgrep`. Fetch and merge each new stable upstream tag into this fork. Resolve conflicts here and review which FreeBSD patches are still needed.
-2. Before publishing, build and test the merged revision in a **FreeBSD virtual machine**. Run the Meson test suite, including the Cargo workspace tests. Launch the installed application in a graphical session and verify searches of plain text, PDFs, and Office documents. Fix FreeBSD regressions in this fork.
-3. Identify the upstream tag in each downstream release. Record the FreeBSD version, architecture, tests actually run, and any gaps. Publish a tagged source archive corresponding to that release.
+The baseline column describes paths visible in the source. Only plain text, PDF, and DOCX have the recorded native search coverage below. The target column specifies the behavior the Qt application will need to demonstrate.
 
-### Native FreeBSD validation
+| Format | Inherited baseline | Hello Needle target |
+| --- | --- | --- |
+| Plain text, including text source files | Line-based search and a source preview that scrolls to the selected line for readable UTF-8. | Preserve source lines and whitespace. Highlight the precise occurrence. |
+| HTML and Markdown | Generic line search and a text/source preview, with syntax highlighting where the source viewer recognizes a language. | Offer **Document** and **Source** search. Document finds readable text across inline markup and shows it formatted. Source finds literal markup, link destinations, and code in the file. |
+| PDF with a text layer | Poppler extracts text by page and renders a matching page. | Keep the page number and match position. Add previous/next page, fit to page, and zoom. Repeated words on the same page must lead to the selected occurrence. |
+| DOCX and ODT (OpenDocument Text) | Reads portions of the main document body. Office results have excerpts, while the preview pane shows an unfinished message. ODT headings and text across styled spans need coverage. | First word-processor milestone. Extract paragraphs, headings, and table text in reading order, join text split across formatting runs, and show the chosen passage with surrounding paragraphs. Use a paragraph or table location that the parser can reproduce. |
+| XLSX and ODS (OpenDocument Spreadsheet) | Reads portions of spreadsheet text. Results do not identify sheet/cell addresses. | Show the sheet name and cell address and highlight the selected cell in its row context. Read stored values and text. Preserve spreadsheet coordinates through extraction. |
+| PPTX and ODP (OpenDocument Presentation) | Extracts slide text and records a slide number. | Group matches by slide, identify the matching text block, and show the slide’s text in context. |
+| RTF, legacy binary Word DOC, flat OpenDocument Text FODT | No dedicated reader for these formats. | A later compatibility milestone adds format-specific readers and sample documents. Parse RTF escapes and code pages, distinguish binary DOC from OOXML, and process flat ODF directly. Report unsupported variants clearly. |
 
-Keep the `FreeBSD` workflow (`.github/workflows/freebsd.yml`) enabled for this fork. Keep the inherited `CI` workflow (`.github/workflows/ci.yaml`), which builds a Linux Flatpak and checks Rust formatting and linting, disabled in the fork’s GitHub Actions settings. Keep its file synchronized with upstream and recheck the setting if upstream renames or replaces the workflow.
+Plain text has one view. HTML and Markdown start in Document mode, with Source available in the search controls. Search the representation shown in the preview. A query for `The Latest Batch` should match both `The **Latest** Batch` and `The <strong>Latest</strong> Batch` in Document mode. A query for `<strong>` in Source mode must locate the actual tag. A document result needs a paragraph or block location, while a source result retains its original line. Keep matches inside block boundaries for the initial document search.
 
-The initial FreeBSD work dates from November 23, 2026. The fork starts at upstream commit `5642bbee94b6684192fa075403222f2d4e2f7559`, two commits after `v26.09`. Its validation target is FreeBSD 15.1-RELEASE on amd64. Configure and compile with Meson and Cargo as a regular user. Install under `/usr/local` with root privileges, then run the tests and the installed application as the regular user.
+For formatted HTML and Markdown, use local parsing and the Qt rich-text facilities where they cover the supported formatting. Preserve headings, lists, quotations, links, and code blocks. Decode entities and preserve meaningful whitespace, especially inside code. The preview must not execute scripts, follow links automatically, or load external resources. For DOCX and ODT, rendered paragraphs are the initial display contract. Page numbers depend on a layout engine, page settings, and fonts. A paragraph match must remain usable across machines. Image-only PDFs, password-protected files, and unrelated binary formats need a clear explanation when their text cannot be read. OCR and exact word-processor page layout are outside the initial milestones.
 
-Keep coverage for these behaviors when integrating upstream changes.
+## Source map and module boundaries
 
-- The installed `clapgrep` executable opens a GTK window and accepts a search folder. Its desktop entry and application resources work from the installation prefix.
-- A search finds known matches in plain text, PDF, and Office files. Check the matching file and its line or page where the format supplies one. Include a file without the search term.
-- Exercise successive short searches in one window. Append each match on the GTK main context before processing the completion message, so a fast search displays its results. A new search must clear the previous results, including when the new query has no matches.
-- On a native desktop, the optional Nautilus integration uses the account’s XDG data directory. The search-folder row must open without GTK critical errors.
-- The desktop-entry and AppStream metadata checks run alongside the Cargo workspace tests. Use a virtual X11 display and fresh per-user XDG settings for the graphical checks.
+Use descriptive names for files, types, and tests. A reader should be able to identify a format handler or trace a selected result without reading the entire application. Keep one implementation of matching and location conversion across platforms. Create directories with the implementation they contain.
 
-Build and install once per VM run. Exercise the installed interface in English under `UTC` and in Spanish under `Europe/Madrid`, with fresh settings for each run. Record which checks used a virtual display and which desktop sessions received additional manual testing.
+| Path | Responsibility | Status |
+| --- | --- | --- |
+| `core/src/engine.rs`, `search.rs`, `result.rs` | Rust search sessions and cancellation, file traversal and filtering, matching, and result messages. | Present. These are the starting point for the shared engine. |
+| `core/src/extra/pdf.rs`, `office.rs` | Poppler/GIO text extraction, ZIP/XML readers for OOXML and ODF. The office module currently contains several readers. | Present. Separate the formats by document family as the readers are extended. |
+| `gnome/`, `assets/`, `locale/`, root Meson files | Historical GTK 4/libadwaita application, GtkSourceView preview, desktop assets, catalog files, and reference build. | Present. Preserve this comparison point until the Qt path can reproduce its important behavior. |
+| `tests/freebsd/`, `.github/workflows/freebsd.yml` | Native FreeBSD build, installation, tests and installed GUI search checks. | Present. The inherited Linux Flatpak workflow is disabled for this repository. |
+| `bridge/` | Narrow Rust-to-C++ interface for starting/canceling a search and delivering results, errors, completion, and preview data. | Planned. Keep GTK and Qt types out of this boundary. |
+| `desktop/qt/` | C++/Qt 6 Widgets window, search controls, results model, keyboard handling, preview panes, settings, About and offline licenses. | Planned. Keep matching and document decoding out of widget code. |
+| `tests/fixtures/`, `tests/desktop/`, `packaging/` | Shared, redistributable format fixtures, end-to-end Qt checks, and platform installation recipes. | Planned. Add platform-specific code at packaging or operating-system boundaries. |
 
-### Keeping the README in sync
+For the new build, Cargo owns Rust compilation and its lockfile. CMake will coordinate the Qt desktop target and link the Rust library through the bridge. Keep the current Meson commands reproducible for the reference application. The existing Rust core has runtime dependencies on Poppler and GIO for PDFs even when compiled separately from the GTK desktop. Verify those dependencies on each native platform before publishing installation requirements.
 
-Maintain the FreeBSD notice at the top of `README.md`. Include the programming credit from “Purpose and name” and the full, clickable upstream project URL. Keep FreeBSD-specific README edits in that notice. Preserve the visible space before the first horizontal rule (`---`) and the blank line after it.
+A structured search result carries its search generation, native file identity or path, source/document mode, format-specific location, display excerpt, and match range. Use file-native paths across the bridge, with an explicit policy for Unix path bytes and Windows Unicode paths. Keep ownership and release of returned buffers in the interface contract. Deliver results through the Qt event loop. A later completion message must follow all earlier results for the same search, and cancellation must discard stale results and preview requests. Document the conversion between Rust UTF-8 byte ranges, Qt UTF-16 cursor positions, and PDF page coordinates at the boundary. Use searchable text and mappings produced by the same extractor for both results and previews.
 
-Keep **Install on FreeBSD** in step with commands verified in the VM. Include the dependencies, clone URL for this fork, regular-user build, privileged installation, and desktop launch command. Keep a separate **Update on FreeBSD** section for an existing clone. Identify the starting directory and show how to pull, rebuild as a regular user, and reinstall with root privileges. Put the optional automated tests after the installation and update instructions. Explain what Meson tests, where to run the command, how to display failure output, and where Meson saves the full log.
+## Milestones and verification
 
-When integrating an upstream tag or commit, copy the complete `README.md` from that exact revision below the divider. Verify that the bytes after the divider and its blank line match the upstream file.
+| Milestone | Evidence that closes it |
+| --- | --- |
+| Project layout | Published repository identity, reader-facing README, this technical record, dated provenance, and applicable license texts. The reference installation can still be reproduced. |
+| First working desktop search | A real Qt window searches a folder using the Rust core, handles cancel/repeat/no results, and opens a selected text match in context. Establish builds on FreeBSD, Windows, Linux, and macOS and report actual OS and architecture for each one. |
+| Document previews | Verify the matching PDF page and navigation, DOCX and ODT paragraphs across formatting runs, and HTML/Markdown Document and Source modes. Preserve names, Unicode, highlighting, keyboard navigation, and source bytes. |
+| Spreadsheet, presentation, and compatibility work | Verify sheet/cell and slide locators for both OOXML and ODF. For RTF, DOC, and FODT, select a distributable decoder and validate representative files before listing support. |
+| First binary distribution | Launch and search using each installed package on a clean native system. Verify offline license display, bundled dependencies, accessible controls and theme contrast, checksums, source archives, and the documented update/uninstall paths. |
 
-## Licensing and FreeBSD packages
+The current FreeBSD reference procedure is documented in the [README](README.md#build-the-current-freebsd-reference). Meson validates the desktop launcher and AppStream metadata and runs the Rust workspace tests. Its log is `build/meson-logs/testlog.txt`. The native VM runs the installed GTK application as a regular account under Xvfb, with a private D-Bus session and fresh XDG settings. Four consecutive searches exercise all expected formats, only the Word match, no matches, and all matches again. The fixture specifies text line 3, PDF page 2, and a DOCX paragraph. Two language/time-zone pairs cover English/UTC and Spanish/Europe/Madrid. A separate preference check installs, compares, and removes the Nautilus extension and closes the application. [Passing reference run on FreeBSD 15.1-RELEASE-p6 amd64](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45205259209)
 
-Clapgrep is licensed under **GNU GPL version 3 or later**. Preserve copyright and license notices, retain the notices for bundled components, and identify and date downstream modifications. When distributing a binary, make its complete corresponding source available, including the FreeBSD patches and build scripts used for the release. [License](LICENSE) · [Upstream license declarations](assets/de.leopoldluley.Clapgrep.metainfo.xml.in.in)
+For Hello Needle, use small redistributable fixtures whose expected locations can be checked by a person. Include a decoy, repeated identical hits in the same document, accented text and a character outside the Unicode Basic Multilingual Plane, a path with spaces, corrupt containers, and one unsupported or protected document. Check HTML tags and entities, Markdown emphasis and link destinations, ODT styled spans and DOCX runs, an ODS/XLSX cell, an ODP/PPTX slide, and the second page of a real PDF. Check that search and preview have left each fixture byte-identical. Test on the installed application as well as against the engine.
 
-The proposed FreeBSD package name is `clapgrep`. A ports maintainer can keep the build recipe and checksum in the separate FreeBSD Ports Collection and fetch a tagged source archive from this fork. That work can be done independently of Alfredo with read-only access to this repository. The FreeBSD Project decides on inclusion and can mirror the source archive and distribute binary packages.
+FreeBSD on amd64 and Ubuntu Linux are the initial Unix reference environments. Windows and macOS need native build and installation checks, including deployment of the Qt platform plugin and PDF libraries. Record the exact editions, architectures, desktop/display back ends, commands, pass counts, and gaps whenever a platform claim is made. Installer type, minimum OS version, and supported architectures will be published after measurement on those platforms.
 
-For a future ports recipe, `Cargo.lock` records the dependency versions and registry checksums. Use it to prepare Cargo distfiles for an offline build of the tagged source.
+## Credits, licenses, and release engineering
 
-## Working with Alfredo
+The program’s license is **GPL-3.0-or-later**. The Cargo workspace declares `GPL-3.0-or-later` and both inherited crates use the shared declaration. Keep the upstream GPL text intact in `LICENSE`, preserve original notices and the credits on retained translations, and identify downstream changes and dates in `NOTICE.md` and in version history. Follow the distinct license declarations for third-party material, including the AppStream metadata. New Hello Needle code and documentation use GPL-3.0-or-later unless a particular file carries its own license. Alfredo is the author of Hello Needle. “Programmed by ChatGPT” is the implementation credit for Hello Needle and the earlier FreeBSD work. Neither credit replaces the original Clapgrep or third-party credits. [Notice and component licenses](NOTICE.md) · [GPL text](LICENSE)
 
-ChatGPT handles the engineering work Alfredo requests, including implementation, builds, testing, upstream release integration, documentation, packaging, and publication of authorized releases. Alfredo provides authorization when a step requires it, performs any additional testing he chooses, and uses the application.
+The source audit identified code from ripgrep and dotext, five Adwaita icons, three GNOME Icon Development Kit icons, and FSFAP-licensed AppStream metadata. Their source revisions, individual licenses, and credits are recorded in the [attribution notice](NOTICE.md). The inherited desktop screenshot containing a university lecture slide was removed from the source tree and its AppStream entry because separate redistribution terms could not be established. Keep later screenshots reproducible with project-owned or suitably licensed fixtures. The FreeBSD reference installs the notices under `share/doc/clapgrep` with the usual prefix, and its native workflow compares the installed texts with the source.
 
-When Alfredo introduces a message with **`Question:`**, answer the question only. Wait for a separate instruction before acting on it.
+Use those credits in the README, this record, the future About dialog, and release materials. About must make the full license and third-party notices readable offline. For packages, include those texts where installed users can find them. Keep a versioned inventory of what the **actual package** contains, including Rust crates, native libraries, Qt modules/plugins, PDF rendering components, third-party assets, modifications and build recipes. Record the chosen license option when a dependency offers alternatives. Check the license of each chosen Qt module. System packages supplied by a platform and components bundled in an installer need separate accounting.
 
-## Keeping this guide current
+For internet downloads, offer complete machine-readable corresponding source alongside each binary, free of extra charge. Give users the exact tagged Hello Needle revision, the corresponding non-system component sources where required, patches, and scripts/configuration to build and install the distributed work. A list of dependencies or checksums cannot substitute for their required source. Audit each artifact from the staging directory and test that its source and license files can be retrieved independently. Record release filenames, supported platforms, build records, and SHA-256 checksums here when they exist. [GPL distribution terms](https://www.gnu.org/licenses/gpl-3.0.html) · [Qt licensing](https://doc.qt.io/qt-6/licensing.html)
 
-Update this file whenever a new project decision is made, an existing decision changes, or something relevant needs to be taken into account in future work. Make the update as part of the work it governs. Replace superseded guidance and distinguish settled decisions from open questions.
+## Open implementation questions
+
+The first Qt implementation will settle the bridge’s concrete ABI and the native packaging route for Poppler, including whether to reuse Poppler for Qt rendering or evaluate a separate PDF viewer. The chosen renderer must reproduce search coordinates and ship under compatible terms. The legacy Word decoder, coverage of headers, footnotes and tracked changes, and behavior on unsupported variants need explicit fixtures and a recorded decision. Update this section as each question is resolved.

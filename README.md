@@ -1,12 +1,37 @@
-# Clapgrep for FreeBSD
+# Hello Needle
 
-This repository contains the source for an independently maintained FreeBSD port of Clapgrep, a graphical application that searches inside plain text, PDFs, and Office documents. The upstream project is at <https://github.com/luleyleo/clapgrep>.
+Hello Needle is a desktop application in development for finding words and phrases inside local files. Select a folder, enter a phrase, and choose a result to see the passage in its document. The project targets **FreeBSD, Windows, Linux, and macOS**. It builds on the Rust search engine from Leopold Luley’s Clapgrep and will have a new C++ interface built with Qt 6 Widgets.
 
-Programmed by **ChatGPT** for Alfredo Llaquet-Alsina.
+Created by **Alfredo Llaquet-Alsina**. **Programmed by ChatGPT.** [Clapgrep and other credits](NOTICE.md)
 
-## Install on FreeBSD
+## Project status
 
-Tested on FreeBSD 15.1-RELEASE-p6 (amd64). These commands build Clapgrep with Rust and Meson and install it under `/usr/local`.
+The November 23, 2026 project layout is published. The executable available from this source tree is the inherited **Clapgrep** application. Its FreeBSD build, installation, and graphical searches have been verified. The new Hello Needle interface and installers are planned. Each platform will get its own installation and update instructions when a build has been tested there. [Project record and milestones](AGENTS.md) · [Verified FreeBSD baseline](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45205259209)
+
+## Interface languages
+
+Hello Needle’s interface will be available in **English and Spanish**. In the current source tree, English is the original interface text and Spanish is the sole translation catalog. Document searches accept text in any language that the chosen file reader can decode.
+
+**En español.** Hello Needle permitirá buscar una frase en una carpeta y leer el pasaje en su contexto. La interfaz estará disponible en español e inglés. Los primeros formatos de documentos de texto con formato serán DOCX (Word) y ODT (LibreOffice Writer). Por ahora, las instrucciones de compilación de esta página corresponden a la aplicación de referencia, Clapgrep para FreeBSD.
+
+## Finding a passage
+
+In the planned interface, the folder and query sit above two resizable panes. The left pane groups matches by file and shows an excerpt for each one. Selecting an excerpt opens the right pane at that occurrence. Someone searching a folder of meeting notes can read the paragraph containing a decision, see which file it came from, and open the original in its usual application.
+
+| Documents | Planned search and preview |
+| --- | --- |
+| Plain text | Search the text, jump to the matching line, and highlight the occurrence among the surrounding lines. |
+| HTML and Markdown | **Document** searches the readable text and shows a formatted preview. **Source** searches the saved markup and opens the matching source line. |
+| PDF | Show the matching page and highlight the passage. Zoom, fit the page, and move to neighboring pages for context. The initial scope covers PDFs with a text layer. |
+| Word and OpenDocument Text | Treat Word **DOCX** and LibreOffice/OpenOffice Writer **ODT** as first-class formats. Show matching text in its paragraph, with surrounding paragraphs and headings. |
+| Spreadsheets and presentations | Cover Excel **XLSX**, Calc **ODS**, PowerPoint **PPTX**, and Impress **ODP**. Use a sheet and cell, or a slide, to identify where a passage occurs. |
+| Other word-processor files | The compatibility plan includes Rich Text Format **RTF**, older binary Word **DOC**, and flat OpenDocument Text **FODT**. Their readers and format-specific tests are later work. |
+
+For example, a Document search for `The Latest Batch` should find `The **Latest** Batch` in Markdown and `The <strong>Latest</strong> Batch` in HTML. A Source search for `<strong>` should take you to the tag. The document preview will read local content with scripts and network requests disabled. Searching and previewing leave the original files untouched.
+
+## Build the current FreeBSD reference
+
+The following commands build **Clapgrep**, which is the working reference during Hello Needle development. The recorded test system was FreeBSD 15.1-RELEASE-p6 on amd64.
 
 1. In a root shell, install the dependencies.
 
@@ -15,93 +40,53 @@ Tested on FreeBSD 15.1-RELEASE-p6 (amd64). These commands build Clapgrep with Ru
        gtksourceview5 poppler-glib blueprint-compiler desktop-file-utils AppStream
    ```
 
-2. As your regular user, clone this fork and build Clapgrep. Cargo downloads the dependencies recorded in `Cargo.lock` on the first build.
+2. As the desktop account, clone the repository and compile from its top-level directory. The first build downloads the Rust dependencies recorded in `Cargo.lock`.
 
    ```sh
-   git clone https://github.com/AlfredoLlaquet/clapgrep-freebsd.git
-   cd clapgrep-freebsd
+   git clone https://github.com/AlfredoLlaquet/helloneedle.git
+   cd helloneedle
    meson setup build --prefix=/usr/local
    CARGO_BUILD_JOBS=2 meson compile -C build
    ```
 
-3. From the same `clapgrep-freebsd` directory, install with root privileges.
+3. From the same directory, install with root privileges. Launch from a graphical session as the desktop account.
 
    ```sh
    su root -c 'meson install -C build --no-rebuild'
-   ```
-
-4. Launch Clapgrep from your desktop’s application menu or run it as your regular user. To start with a particular folder selected, pass its path as an argument.
-
-   ```sh
    clapgrep
    ```
 
-## Update on FreeBSD
-
-As your regular user, start in the top level of your existing `clapgrep-freebsd` clone, the directory containing `meson.build`. Pull the latest changes on `main` and rebuild.
+To update an existing checkout of this project, start in the directory that contains `meson.build`. A clone made under the former name can keep its local directory. Set its remote once with `git remote set-url origin https://github.com/AlfredoLlaquet/helloneedle.git`.
 
 ```sh
 git switch main
 git pull --ff-only origin main
 CARGO_BUILD_JOBS=2 meson compile -C build
-```
-
-From that same directory, reinstall with root privileges. Close and reopen Clapgrep to run the updated version.
-
-```sh
 su root -c 'meson install -C build --no-rebuild'
 ```
 
-## Run the automated tests (optional)
+## Verify the reference build
 
-From the top level of your clone, run the upstream test suite as your regular user after building. Meson validates the desktop entry and AppStream metadata and runs the Rust workspace tests. It prints details for any failure and writes the full log to `build/meson-logs/testlog.txt`.
+From the repository root, the desktop account can run the Rust workspace tests and validate the desktop entry and AppStream metadata. Meson prints any failures and records the full output in `build/meson-logs/testlog.txt`.
 
 ```sh
 CARGO_BUILD_JOBS=2 meson test -C build --print-errorlogs --timeout-multiplier 20
 ```
 
-The fork also tests the installed application in a temporary graphical session. In a root shell, install the test dependencies and initialize the D-Bus machine ID if needed.
+For the installed-application tests, install these additional packages as root.
 
 ```sh
 pkg install xorg-vfbserver dbus python3 py312-atspi py312-pycairo dejavu xdotool
 dbus-uuidgen --ensure
 ```
 
-After installing Clapgrep, run the following from the top level of the clone as your regular user. The checks open fresh virtual X11 sessions in English and Spanish. They verify the matching text line, PDF page, and Word paragraph, repeat searches in the same window, and use the Nautilus preference to install and remove the extension in a temporary data directory.
+Run the two commands below as the desktop account. They open an isolated X11 session for each language, exercise four consecutive searches, and check the optional Nautilus extension in a temporary data directory. The fixtures contain a plain-text match on line 3, a PDF match on page 2, and a DOCX paragraph. [FreeBSD workflow](.github/workflows/freebsd.yml)
 
 ```sh
 TZ=UTC sh tests/freebsd/installed-search.sh en
 TZ=Europe/Madrid sh tests/freebsd/installed-search.sh es
 ```
 
-Everything below the horizontal rule is the upstream Clapgrep README, reproduced verbatim from the revision used by this fork. Its Flathub link is for the upstream Linux release.
+## License and origins
 
-<br><br>
-
----
-
-# Clapgrep
-
-One app to search through all your files
-
-[![Get it on Flathub](https://flathub.org/api/badge?svg&locale=en)](https://flathub.org/apps/de.leopoldluley.Clapgrep)
-
-## Description
-
-Ever had a folder full of PDF files, where you knew, somewhere in there, is what you're looking for. But you did not know in which file. So you had to search each of them at a time...
-
-With Clapgrep this is no longer necessary! Simply open the folder with Clapgrep, enter the search term, and Clapgrep will do all the hard work of finding out on which page / line in which file the information is that you are looking for!
-
-Clapgrep can currently search all sorts of text files, PDFs and Office documents, with more to come.
-
-![screenshot of the app](assets/screenshot-1.png)
-
-## Translations
-
-[![Translation status](https://hosted.weblate.org/widget/clapgrep/clapgrep/multi-auto.svg)](https://hosted.weblate.org/engage/clapgrep/)
-
-You can help translate Clapgrep on [Weblate](https://hosted.weblate.org/engage/clapgrep/) .
-
-## Building from Source
-
-See [CONTRIBUTING.md](/CONTRIBUTING.md) for code contribution and build instructions.
+Hello Needle is licensed under the **GNU General Public License, version 3 or later** (`GPL-3.0-or-later`) and is supplied without warranty as set out in that license. The original Clapgrep work is by Leopold Luley and its contributors. Individual third-party files retain their own notices and license terms. Each future binary release is to include its notices and offer the complete corresponding source for that build. [Full license](LICENSE) · [Attribution and component notices](NOTICE.md) · [Original Clapgrep project](https://github.com/luleyleo/clapgrep)
