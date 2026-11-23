@@ -1,7 +1,7 @@
 # CG4FBS BEGIN ADDITION — Build the fork and exercise its installed application in FreeBSD.
 name: FreeBSD
 
-on: [push, pull_request, workflow_dispatch]
+on: workflow_dispatch
 
 permissions:
   contents: read
