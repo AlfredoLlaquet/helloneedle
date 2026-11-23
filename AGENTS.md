@@ -87,6 +87,8 @@ Builds install `LICENSE`, `NOTICE.md`, the component notices and the Rust depend
 
 The native Word piece-table reader uses the MIT-licensed `cfb` crate for compound storage. The worker handles compressed and UTF-16 pieces and separates field results from field instructions. The short multilingual DOC and the corresponding text source are under `tests/desktop/fixtures/`. A second Word fixture contains a recorded deletion and manually hidden text.
 
+The filename test passes the exact bytes returned by a search into the preview request. On a filesystem that accepts non-UTF-8 names, it uses a name containing the byte 0xFF. On APFS, which rejects that fixture, it uses a decomposed accented filename and verifies its exact bytes.
+
 The fast worker check exercises the same process protocol used by the desktop. The fixture generator writes a three-page PDF with repeated words on page two, rich Word and ODF paragraphs split across formatting, an XLSX and ODS value at Quarterly!C7, a slide-two match, RTF, markup, and original plain text with an emoji before two hits. `fixtures/sample.doc` is a real binary Word file generated from the tracked original `sample.txt` with LibreOffice Writer's “MS Word 97” export filter. Hash comparisons confirm that search and preview leave the originals byte-identical.
 
 ```sh
@@ -96,6 +98,8 @@ ctest --test-dir build-qt --output-on-failure
 ```
 
 For the GUI, build the `helloneedle-gui-tests` target and run `tests/desktop/gui_matrix.py` through CTest on a graphical desktop. On FreeBSD or Linux use the provided `packaging/x11-tests.sh` when there is no graphical login. The native Qt plugin is XCB on both Unix systems, Windows on Windows, and Cocoa on macOS. Use fresh settings on first launch. Capture the window before the first query, menus, editable fields, selected results, document previews, file picker, licenses, and a narrow window. Exercise the keyboard, cancellation, empty results and repeated searches. Include Spanish, whose longer controls make clipping easier to spot. Test system appearance and explicit light/dark coverage under normal and increased scaling. A deliberately supplied test palette must be recorded as such. Keep any distinction between a hosted Windows Server and a Windows 11 desktop visible in the report.
+
+For first-launch evidence, compare the captured window’s client area with Hello Needle’s rendered controls before saving a frame. A hosted Windows 11 desktop can put a setup window in front of the application. Capture Hello Needle by its native window handle and record which capture was verified. On macOS the menu bar is separate from the window. Record the translated titles published through AppKit and verify ownership before treating a menu-bar image as evidence.
 
 Attach the native OS, architecture, Qt version, platform plugin, theme source, scaling, checks, numerical measurements, and screenshot files to each run. Review the rendered images as well as the numerical results. A text field can have sufficient measured contrast while being crowded into half a line. A menu can be readable while displaying a generic Qt placeholder icon. A palette on an offscreen plugin cannot establish the appearance of the native platform. Keep failed evidence and any reproducible defect with the correction until it passes on the affected platform. The Actions run also records package hashes and the source archive. [Build and appearance runs](https://github.com/AlfredoLlaquet/helloneedle/actions)
 

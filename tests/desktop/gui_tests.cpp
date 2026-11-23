@@ -4,6 +4,7 @@
 #include "mainwindow.h"
 #include "gui_appearance.h"
 #include "gui_icon.h"
+#include "gui_capture.h"
 #include "picker_native.h"
 
 #include <QAbstractButton>
@@ -282,16 +283,8 @@ private slots:
         evidence["firstFrame"] = QJsonArray{frame.x(),frame.y(),frame.width(),frame.height()};
         evidence["searchCaption"] = caption;
         VERIFY_OK(guiqa::saveView(*window, "first-launch"));
-        const QPixmap native = guiqa::hasExpectedPlatform() ? window->screen()->grabWindow(window->winId()) : QPixmap();
-        evidence["nativeWindowCapture"] = saveNative(native, "first-launch-native");
-        // Capture the actual non-client frame on an isolated native runner as
-        // well. Full desktop capture is unnecessary for checking initial chrome.
-        if (guiqa::hasExpectedPlatform() && qEnvironmentVariableIsSet("GITHUB_ACTIONS")) {
-            const QPoint origin = frame.topLeft() - window->screen()->geometry().topLeft();
-            const auto framed = window->screen()->grabWindow(0, origin.x(), origin.y(),
-                                                             frame.width(), frame.height());
-            evidence["nativeFrameCapture"] = saveNative(framed, "first-launch-frame");
-        }
+        if (guiqa::hasExpectedPlatform())
+            guiqa::captureFirstWindow(*window, evidence);
         QVERIFY2(frame.width() <= available.width() + 4 && frame.height() <= available.height() + 4,
                  qPrintable(QString("First launch %1x%2 exceeds work area %3x%4")
                      .arg(frame.width()).arg(frame.height()).arg(available.width()).arg(available.height())));
@@ -352,13 +345,23 @@ private slots:
                 QString title = control<QMenu>(name)->title();
                 return title.remove('&');
             };
-            QVERIFY2(titles.contains(nativeTitle("searchMenu")) && titles.contains(nativeTitle("languageMenu")),
-                     qPrintable("Cocoa did not publish the translated menus: " + titles.join(", ")));
-            if (qEnvironmentVariableIsSet("GITHUB_ACTIONS") && qApp->applicationState() == Qt::ApplicationActive) {
-                auto *screen = window->screen();
-                const int barHeight = qBound(24, screen->availableGeometry().top() - screen->geometry().top(), 40);
-                const auto native = screen->grabWindow(0, 0, 0, qMin(600, screen->geometry().width()), barHeight);
-                evidence["cocoaMenuBarCapture"] = saveNative(native, "native-menu-bar");
+            QJsonObject nativeActions;
+            for (const auto *name : {"fileMenu", "searchMenu", "languageMenu", "helpMenu"}) {
+                const QString title = nativeTitle(name);
+                QVERIFY2(titles.contains(title), qPrintable("Missing native Cocoa menu: " + title));
+                const QStringList actions = cocoaMenuActions(title);
+                nativeActions[title] = QJsonArray::fromStringList(actions);
+                QVERIFY2(!actions.isEmpty(), qPrintable("No reachable native Cocoa menu actions in " + title));
+            }
+            evidence["cocoaEnabledActions"] = nativeActions;
+            if (qEnvironmentVariableIsSet("GITHUB_ACTIONS")) {
+                QJsonObject owner;
+                auto native = captureActiveCocoaMenu(window->winId(), owner);
+                const bool captured = saveNative(native, "native-menu-bar");
+                if (!captured && !owner.contains("reason"))
+                    owner["reason"] = "The screen capture contained no readable menu pixels";
+                evidence["cocoaMenuBarCapture"] = captured;
+                evidence["cocoaMenuBarOwner"] = owner;
             }
         }
 #endif

@@ -7,6 +7,8 @@
 #include <QCheckBox>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
+#include <QJsonDocument>
 #include <QHash>
 #include <QImage>
 #include <QJsonArray>
@@ -373,9 +375,13 @@ bool makeReviewSheet(const QString &root)
         const QString rel = panel.name + "/" + panel.state;
         QImage source;
         if (panel.name == "system" && panel.state == "first-launch") {
-            source.load(QDir(root).filePath(panel.name + "/first-launch-frame.png"));
-            if (source.isNull())
-                source.load(QDir(root).filePath(panel.name + "/first-launch-native.png"));
+            QFile data(QDir(root).filePath(panel.name + "/appearance.json"));
+            if (data.open(QIODevice::ReadOnly)) {
+                const auto record = QJsonDocument::fromJson(data.readAll()).object();
+                const QString file = record.value("nativeCaptureUsed").toString();
+                if (file == "first-launch-frame.png" || file == "first-launch-native.png")
+                    source.load(QDir(root).filePath(panel.name + "/" + file));
+            }
         }
         if (source.isNull())
             source.load(QDir(root).filePath(rel + ".png"));

@@ -1,7 +1,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-add_executable(helloneedle-gui-tests gui_tests.cpp gui_appearance.cpp gui_icon.cpp)
+add_executable(helloneedle-gui-tests gui_tests.cpp gui_appearance.cpp gui_icon.cpp gui_capture.cpp)
 set_target_properties(helloneedle-gui-tests PROPERTIES AUTOMOC ON)
 target_compile_features(helloneedle-gui-tests PRIVATE cxx_std_17)
 target_link_libraries(helloneedle-gui-tests PRIVATE helloneedle-desktop Qt6::Test)
@@ -14,8 +14,8 @@ if(APPLE)
     target_sources(helloneedle-gui-tests PRIVATE picker_mac.mm)
     target_link_libraries(helloneedle-gui-tests PRIVATE "-framework AppKit")
 elseif(WIN32)
-    target_sources(helloneedle-gui-tests PRIVATE picker_win.cpp)
-    target_link_libraries(helloneedle-gui-tests PRIVATE user32)
+    target_sources(helloneedle-gui-tests PRIVATE picker_win.cpp gui_capture_win.cpp)
+    target_link_libraries(helloneedle-gui-tests PRIVATE user32 gdi32)
 endif()
 
 add_test(NAME native-desktop-gui

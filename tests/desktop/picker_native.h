@@ -14,6 +14,10 @@ void dismissNativeDirectoryPicker(const std::shared_ptr<NativePickerProbe> &prob
 #endif
 
 #ifdef Q_OS_MACOS
+#include <QJsonObject>
+#include <QPixmap>
 #include <QStringList>
 QStringList cocoaMenuTitles();
+QStringList cocoaMenuActions(const QString &menuTitle);
+QPixmap captureActiveCocoaMenu(quintptr viewId, QJsonObject &state);
 #endif
