@@ -91,6 +91,10 @@ The native workflow signs each verified installer and its checksum manifest thro
 
 ## Verification, including native appearance
 
+On a clean Windows installation, the Start menu test records exit codes for both the installed GUI and its launcher. The directory-picker fixture resolves the temporary profile path first because Windows can give the same folder a short name such as `RUNNER~1` and a full name. The installer tests also repair the installation in Spanish, remove it, and verify the original documents by checksum. [Windows installer tests](tests/installer/verify-windows.ps1)
+
+For older Word documents, the worker requests UTF-8 text from antiword. The macOS package includes the character maps supplied by MacPorts. The `UTF-8.txt` map selects the bundled data directory. Antiword uses its separate `fontnames` table for formatted output. The clean-install test reads a Word for DOS document containing `café` so a missing or incorrect text mapping is visible. [Document conversion](bridge/src/converters.rs) · [Installed-document tests](tests/installer/runtime-check.py)
+
 The native Word piece-table reader uses the MIT-licensed `cfb` crate for compound storage. The worker handles compressed and UTF-16 pieces and separates field results from field instructions. The short multilingual DOC and the corresponding text source are under `tests/desktop/fixtures/`. A second Word fixture contains a recorded deletion and manually hidden text.
 
 The filename test passes the exact bytes returned by a search into the preview request. On a filesystem that accepts non-UTF-8 names, it uses a name containing the byte 0xFF. On APFS, which rejects that fixture, it uses a decomposed accented filename and verifies its exact bytes.

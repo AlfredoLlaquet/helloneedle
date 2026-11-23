@@ -153,15 +153,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$(uname -m)" = "$MAC_CPU"
-          python3 packaging/macos/package.py build --app 'build-qt/package-root/Hello Needle.app' \
-            --work build-qt/macos-deploy --output native-out/macos-installer --sources native-out/macos-sources
+          mkdir -p native-out/installer-diagnostics
+          python3 -u packaging/macos/package.py build --app 'build-qt/package-root/Hello Needle.app' \
+            --work build-qt/macos-deploy --output native-out/macos-installer --sources native-out/macos-sources \
+            2>&1 | tee native-out/installer-diagnostics/native-deploy.log
           stem="HelloNeedle-$PRODUCT_VERSION-macOS-$MAC_CPU"
           python3 .github/scripts/installer_artifacts.py sources --source native-out/macos-sources \
             --output "native-out/macos-runtime/$stem-Runtime-Sources.tar"
           python3 .github/scripts/installer_artifacts.py manifest --installer "native-out/macos-installer/$stem.dmg" \
             --output "native-out/macos-installer/$stem-SHA256SUMS" --checksums native-out/source/SHA256SUMS native-out/macos-runtime/SHA256SUMS
-          python3 packaging/macos/package.py install --image "native-out/macos-installer/$stem.dmg" \
-            --prefix "$RUNNER_TEMP/Native Installed Applications"
+          python3 -u packaging/macos/package.py install --image "native-out/macos-installer/$stem.dmg" \
+            --prefix "$RUNNER_TEMP/Native Installed Applications" 2>&1 | tee native-out/installer-diagnostics/native-install.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: helloneedle-macos-${{ env.MAC_CPU }}-runtime-sources
@@ -178,24 +180,28 @@ jobs:
           compression-level: 0
           if-no-files-found: error
       - name: Cross-build the Apple Silicon app from the same revision on Intel
-        if: env.MAC_CPU == 'x86_64'
+        # The installed-file manifest is enough to test the second architecture.
+        if: ${{ !cancelled() && env.MAC_CPU == 'x86_64' && hashFiles('build-qt/macos-deploy/runtime-manifest.json') != '' }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/hn-arm"
-          python3 packaging/macos/cross/prepare.py --build build-qt --intel-app 'build-qt/package-root/Hello Needle.app' \
-            --work "$RUNNER_TEMP/hn-apple-cross" --output "$RUNNER_TEMP/hn-arm/Hello Needle.app"
+          mkdir -p "$RUNNER_TEMP/hn-arm" native-out/installer-diagnostics
+          python3 -u packaging/macos/cross/prepare.py --build build-qt --intel-app 'build-qt/package-root/Hello Needle.app' \
+            --work "$RUNNER_TEMP/hn-apple-cross" --output "$RUNNER_TEMP/hn-arm/Hello Needle.app" \
+            2>&1 | tee native-out/installer-diagnostics/arm64-compile.log
           sysroot="$RUNNER_TEMP/hn-apple-cross/sysroot"
           export PKG_CONFIG_SYSROOT_DIR="$sysroot" PKG_CONFIG_LIBDIR="$sysroot/opt/local/lib/pkgconfig:$sysroot/opt/local/share/pkgconfig"
-          python3 packaging/macos/package.py build --app "$RUNNER_TEMP/hn-arm/Hello Needle.app" \
+          python3 -u packaging/macos/package.py build --app "$RUNNER_TEMP/hn-arm/Hello Needle.app" \
             --arch arm64 --prefix "$sysroot/opt/local" --work build-qt/macos-deploy-arm \
-            --output native-out/cross-arm-installer --sources native-out/cross-arm-sources
+            --output native-out/cross-arm-installer --sources native-out/cross-arm-sources \
+            2>&1 | tee native-out/installer-diagnostics/arm64-deploy.log
       - name: Merge both complete architectures and create the Universal disk image
         if: env.MAC_CPU == 'x86_64'
         run: |
           set -euo pipefail
           stem="HelloNeedle-$PRODUCT_VERSION-macOS"
-          python3 packaging/macos/package.py universal --arm "native-out/cross-arm-installer/$stem-arm64.dmg" \
-            --intel "native-out/macos-installer/$stem-x86_64.dmg" --output native-out/universal-installer
+          python3 -u packaging/macos/package.py universal --arm "native-out/cross-arm-installer/$stem-arm64.dmg" \
+            --intel "native-out/macos-installer/$stem-x86_64.dmg" --output native-out/universal-installer \
+            2>&1 | tee native-out/installer-diagnostics/universal.log
           python3 .github/scripts/installer_artifacts.py sources --source native-out/cross-arm-sources \
             --output "native-out/universal-arm-runtime/$stem-Universal-arm64-Runtime-Sources.tar"
           python3 .github/scripts/installer_artifacts.py manifest --installer "native-out/universal-installer/$stem-Universal.dmg" \
@@ -218,6 +224,17 @@ jobs:
             native-out/universal-installer/*-SHA256SUMS
           compression-level: 0
           if-no-files-found: error
+      - name: Preserve macOS packaging logs and runtime inventories on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: macos-packaging-diagnostics-${{ env.MAC_CPU }}
+          path: |
+            native-out/installer-diagnostics/*.log
+            build-qt/macos-deploy*/runtime-manifest.json
+            native-out/macos-sources/RUNTIME-SOURCES.json
+            native-out/cross-arm-sources/RUNTIME-SOURCES.json
+          if-no-files-found: ignore
 
   macos-arm:
     name: macOS 26 Apple Silicon, native Cocoa and installer

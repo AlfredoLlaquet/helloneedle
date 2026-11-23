@@ -40,10 +40,8 @@ pub(crate) fn command(name: &str) -> Option<Command> {
         };
         if name == "antiword" {
             let maps = prefix.join("share/antiword");
-            if env::var_os("ANTIWORDHOME").is_none()
-                && maps.join("UTF-8.txt").is_file()
-                && maps.join("fontnames").is_file()
-            {
+            // Text extraction requests this map even on distributions that only ship text-mode data.
+            if env::var_os("ANTIWORDHOME").is_none() && maps.join("UTF-8.txt").is_file() {
                 command.env("ANTIWORDHOME", maps);
             }
         } else {

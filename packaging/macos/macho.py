@@ -246,7 +246,8 @@ def verify(app, archs):
     required = ["MacOS/helloneedle", "MacOS/helloneedle-worker", "MacOS/antiword", "MacOS/pdftotext", "MacOS/pdftoppm",
                 "PlugIns/platforms/libqcocoa.dylib", "PlugIns/styles/libqmacstyle.dylib", "Resources/helloneedle.icns",
                 "Resources/qt.conf", "Resources/translations/qtbase_es.qm", "Resources/share/antiword/UTF-8.txt",
-                "Resources/share/antiword/fontnames", "Resources/share/poppler/cMap/Adobe-Japan1", "Resources/fonts/fonts.conf",
+                "Resources/share/poppler/unicodeMap/EUC-JP", "Resources/share/poppler/cidToUnicode/Adobe-Japan1",
+                "Resources/share/poppler/cMap/Adobe-Japan1/UniJIS-UTF16-H", "Resources/fonts/fonts.conf",
                 "Resources/licenses/LICENSE", "Resources/licenses/NOTICE.md"]
     for item in required:
         if not (contents / item).exists():
