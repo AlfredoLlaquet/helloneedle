@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           stem=HelloNeedle-1.0.0-macOS
-          python3 -u packaging/macos/package.py universal \
+          python3 -u .github/scripts/merge_verified_native_apps.py --evidence evidence/icon-provenance.json \
             --arm "inputs/helloneedle-macos-arm64-installer/$stem-arm64.dmg" \
             --intel "inputs/helloneedle-macos-x86_64-installer/$stem-x86_64.dmg" \
             --output product 2>&1 | tee evidence/merge.log
