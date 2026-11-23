@@ -574,10 +574,29 @@ jobs:
       - name: Check the exact installer and checksum list from the installation tests
         working-directory: payload
         run: |
-          set -euo pipefail
-          test "$(find . -type f | wc -l)" -eq 2
-          test -f "$FILE_STEM$INSTALLER_SUFFIX"
-          grep -Fxq -- "$(sha256sum "$FILE_STEM$INSTALLER_SUFFIX")" "$FILE_STEM-SHA256SUMS"
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+
+          stem = os.environ["FILE_STEM"]
+          installer = Path(stem + os.environ["INSTALLER_SUFFIX"])
+          manifest = Path(stem + "-SHA256SUMS")
+          expected = {installer, manifest}
+          if set(Path(".").iterdir()) != expected or any(p.is_symlink() or not p.is_file() for p in expected):
+              raise SystemExit("The installer artifact must contain exactly the expected installer and checksum list.")
+          entries = {}
+          for line in manifest.read_text(encoding="ascii").splitlines():
+              match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9_.+-]*)", line)
+              if not match or match[2] in entries:
+                  raise SystemExit("Malformed or duplicate filename in the installer checksum list.")
+              entries[match[2]] = match[1]
+          with installer.open("rb") as stream:
+              actual = hashlib.file_digest(stream, "sha256").hexdigest()
+          if entries.get(installer.name) != actual:
+              raise SystemExit("The installer bytes differ from the recorded checksum for its exact filename.")
+          PY
       - id: attest
         name: Generate GitHub build provenance for both files
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

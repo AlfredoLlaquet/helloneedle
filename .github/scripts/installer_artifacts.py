@@ -16,6 +16,21 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def read_checksums(path):
+    entries = {}
+    for line in path.read_text(encoding="ascii").splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9_.+-]*)", line)
+        if not match or match[2] in entries:
+            raise SystemExit(f"Malformed or duplicate filename in {path}")
+        entries[match[2]] = match[1]
+    return entries
+
+
+def write_checksums(path, entries):
+    lines = (f"{entries[name]}  {name}\n" for name in sorted(entries))
+    path.write_bytes("".join(lines).encode("ascii"))
+
+
 class ArchiveParts:
     """Stream a TAR once, staying below GitHub's 2 GiB release asset limit."""
 
@@ -59,17 +74,14 @@ def package_sources(args):
             archive.add(folder, arcname=output.stem)
     finally:
         parts.file.close()
-    (output.parent / "SHA256SUMS").write_text("".join(f"{sha256(p)}  {p.name}\n" for p in parts.paths), encoding="ascii")
+    write_checksums(output.parent / "SHA256SUMS", {p.name: sha256(p) for p in parts.paths})
 
 
 def installer_manifest(args):
     installer = args.installer
     checked = {installer.name: sha256(installer)}
     for path in args.checksums:
-        for line in path.read_text(encoding="ascii").splitlines():
-            digest, separator, name = line.partition("  ")
-            if not separator or not re.fullmatch(r"[0-9a-f]{64}", digest) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", name):
-                raise SystemExit(f"Invalid checksum entry in {path}")
+        for name, digest in read_checksums(path).items():
             # A universal DMG uses the sources listed with both original slices.
             if name.endswith((".dmg", ".exe")) and name != installer.name:
                 continue
@@ -78,12 +90,11 @@ def installer_manifest(args):
             checked[name] = digest
     if not any("-source-" in n for n in checked) or not any("Runtime-Sources" in n for n in checked):
         raise SystemExit("Installer manifests must cover the project and its bundled runtime sources.")
-    args.output.write_text("".join(f"{checked[n]}  {n}\n" for n in sorted(checked)), encoding="ascii")
+    write_checksums(args.output, checked)
 
 
 def verify_installer(args):
-    expected = f"{sha256(args.installer)}  {args.installer.name}"
-    if args.checksums.read_text(encoding="ascii").splitlines().count(expected) != 1:
+    if read_checksums(args.checksums).get(args.installer.name) != sha256(args.installer):
         raise SystemExit(f"Installer checksum differs: {args.installer.name}")
 
 
