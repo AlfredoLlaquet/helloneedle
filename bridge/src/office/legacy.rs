@@ -12,6 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod word97;
+
 fn executable() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "antiword.exe"
@@ -45,6 +47,9 @@ pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<(
         )
     {
         bail!("unsupported_document: expected a legacy binary Word file");
+    }
+    if &sig == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" && word97::read(file, out)? {
+        return Ok(());
     }
     let program = executable().ok_or_else(|| anyhow!("missing_decoder: antiword"))?;
     let absolute = path.canonicalize()?;

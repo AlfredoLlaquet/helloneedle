@@ -17,7 +17,7 @@ set the Windows environment variable HELLONEEDLE_UCRT64 to its full ucrt64
 folder, or start the launcher from the corresponding UCRT64 terminal.
 
 The bin folder contains the Qt application and search worker. Poppler
-provides PDF extraction and rendering. Antiword reads legacy .doc files.
+provides PDF extraction and rendering. The worker reads Word 97–2003 files. Antiword handles earlier Word variants.
 Qt and these converters receive updates through MSYS2. This archive
 contains x64 binaries. Windows 11 on Arm runs them through x64 emulation.
 

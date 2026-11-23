@@ -7,6 +7,7 @@
 
 class QApplication;
 class QLineEdit;
+class QTextBrowser;
 class QWidget;
 
 namespace guiqa {
@@ -17,6 +18,7 @@ QString inspectLayout(QWidget &window);
 QString inspectColors(QWidget &window, QJsonObject &colors);
 QString inspectMenuInk(QWidget &menu, const QRect &action, QJsonObject &metrics);
 QString inspectRenderedField(QLineEdit &edit, QJsonObject &metrics);
+QString inspectPreviewPrompt(QTextBrowser &preview, QJsonObject &metrics);
 QString saveView(QWidget &widget, const QString &name);
 bool makeReviewSheet(const QString &root);
 bool hasExpectedPlatform();

@@ -25,6 +25,7 @@
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTextBrowser>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -503,12 +504,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::adjustTextContrast()
 {
-    if (!queryEdit || !folderEdit || !patternEdit) return;
+    if (!queryEdit || !folderEdit || !patternEdit || !preview) return;
     const auto lum = [](const QColor &c) {
         const auto linear = [](double s) { return s <= .04045 ? s / 12.92 : std::pow((s + .055) / 1.055, 2.4); };
         return .2126 * linear(c.redF()) + .7152 * linear(c.greenF()) + .0722 * linear(c.blueF());
     };
-    for (auto *edit : {folderEdit, queryEdit, patternEdit}) {
+    // Include the QTextBrowser's empty-state prompt: several native palettes
+    // supply a translucent gray that is hard to read on the viewport base.
+    const QList<QWidget *> fields{folderEdit, queryEdit, patternEdit, preview->findChild<QTextBrowser *>()};
+    constexpr double target = 5.0; // Leave room for antialiasing at small native font sizes.
+    for (auto *edit : fields) {
         auto palette = QApplication::palette(edit);
         for (auto group : {QPalette::Active, QPalette::Inactive}) {
             QColor base = palette.color(group, QPalette::Base);
@@ -517,13 +522,13 @@ void MainWindow::adjustTextContrast()
                 return (qMax(a,b) + .05) / (qMin(a,b) + .05);
             };
             QColor ink = palette.color(group, QPalette::Text);
-            if (ratio(ink) < 4.5) ink = ratio(Qt::white) > ratio(Qt::black) ? Qt::white : Qt::black;
+            if (ratio(ink) < target) ink = ratio(Qt::white) > ratio(Qt::black) ? Qt::white : Qt::black;
             palette.setColor(group, QPalette::Text, ink);
             QColor hint = palette.color(group, QPalette::PlaceholderText);
             const double alpha = hint.alphaF();
             hint.setRgbF(alpha*hint.redF() + (1-alpha)*base.redF(), alpha*hint.greenF() + (1-alpha)*base.greenF(),
                          alpha*hint.blueF() + (1-alpha)*base.blueF());
-            for (int step = 0; ratio(hint) < 4.5 && step < 16; ++step)
+            for (int step = 0; ratio(hint) < target && step < 16; ++step)
                 hint.setRgb((hint.red()+ink.red())/2, (hint.green()+ink.green())/2, (hint.blue()+ink.blue())/2);
             palette.setColor(group, QPalette::PlaceholderText, hint);
         }

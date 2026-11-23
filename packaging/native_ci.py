@@ -86,8 +86,11 @@ def system_packages():
         if Path(shutil.which("pdftotext") or "").is_relative_to("/opt/local"):
             return output(["/opt/local/bin/port", "-q", "installed", "qt6-qtbase", "qt6-qttranslations", "poppler", "antiword"])
         return output(["brew", "list", "--versions", "qtbase", "qttranslations", "poppler", "antiword"])
-    return output(["pacman", "-Q", *["mingw-w64-ucrt-x86_64-" + name
-                                     for name in ["qt6-base", "qt6-translations", "poppler", "antiword", "gcc-libs"]]])
+    managed = ["mingw-w64-ucrt-x86_64-" + name for name in ("qt6-base", "qt6-translations", "poppler", "antiword")]
+    # MSYS2 has both combined and split GCC runtime packages. Ask about the actual DLLs.
+    runtime = output(["pacman", "-Qqo", "/ucrt64/bin/libgcc_s_seh-1.dll", "/ucrt64/bin/libstdc++-6.dll",
+                      "/ucrt64/bin/libwinpthread-1.dll"]).splitlines()
+    return output(["pacman", "-Q", *dict.fromkeys(managed + runtime)])
 
 
 def converter_versions():
@@ -147,7 +150,7 @@ def debian(stage, bindir, dist, version):
         metadata = Path(temp) / "debian"
         metadata.mkdir()
         (metadata / "control").write_text(
-            f"Source: helloneedle\nSection: utils\nPriority: optional\nMaintainer: Hello Needle <{MAINTAINER}>\n"
+            f"Source: helloneedle\nSection: utils\nPriority: optional\nMaintainer: Alfredo Llaquet-Alsina <{MAINTAINER}>\n"
             "\nPackage: helloneedle\nArchitecture: any\nDescription: Local desktop document search\n",
             encoding="utf-8")
         shlibs = output(["dpkg-shlibdeps", "-O", bindir / "helloneedle", bindir / "helloneedle-worker"],
@@ -158,7 +161,7 @@ def debian(stage, bindir, dist, version):
     control.mkdir(exist_ok=True)
     (control / "control").write_text(
         f"Package: helloneedle\nVersion: {version}\nArchitecture: {arch}\nSection: utils\nPriority: optional\n"
-        f"Maintainer: Hello Needle <{MAINTAINER}>\nHomepage: {PROJECT_URL}\n"
+        f"Maintainer: Alfredo Llaquet-Alsina <{MAINTAINER}>\nHomepage: {PROJECT_URL}\n"
         f"Depends: {depends}, qt6-qpa-plugins, qt6-translations-l10n, poppler-utils, antiword\n"
         "Description: Search and preview local documents with Hello Needle\n",
         encoding="utf-8")

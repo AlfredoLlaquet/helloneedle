@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleIdentifier</key><string>org.thecrumbs.HelloNeedle</string>
+  <key>NSHumanReadableCopyright</key><string>Hello Needle by Alfredo Llaquet-Alsina. Programmed by ChatGPT. GPL-3.0-or-later.</string>
   <key>CFBundleName</key><string>Hello Needle</string>
   <key>CFBundleDisplayName</key><string>Hello Needle</string>
   <key>CFBundleExecutable</key><string>helloneedle</string>

@@ -297,13 +297,24 @@ private slots:
                  qPrintable(QString("First launch %1x%2 exceeds work area %3x%4")
                      .arg(frame.width()).arg(frame.height()).arg(available.width()).arg(available.height())));
         VERIFY_OK(guiqa::inspectLayout(*window));
-        QJsonObject colors, pixels;
+        QJsonObject colors, pixels, folderPixels, previewPixels;
         const QString colorError = guiqa::inspectColors(*window, colors);
         const QString pixelError = guiqa::inspectRenderedField(*query, pixels);
+        const QString folderError = guiqa::inspectRenderedField(*control<QLineEdit>("folderEdit"), folderPixels);
+        const QString previewError = guiqa::inspectPreviewPrompt(*preview, previewPixels);
+        evidence["renderedFolderField"] = folderPixels;
+        evidence["renderedPreviewPrompt"] = previewPixels;
+        QJsonArray disabled;
+        for (auto *button : {cancel, control<QAbstractButton>("openOriginalButton")})
+            if (button && !button->isEnabled())
+                disabled.append(button->objectName());
+        evidence["disabledFirstLaunchControls"] = disabled;
         evidence["contrast"] = colors;
         evidence["renderedQueryField"] = pixels;
         VERIFY_OK(colorError);
         VERIFY_OK(pixelError);
+        VERIFY_OK(folderError);
+        VERIFY_OK(previewError);
     }
 
     void optionsAndMenus()
@@ -320,6 +331,10 @@ private slots:
         window->resize(std::min(760, available.width()-12), std::min(580, available.height()-48));
         QTest::qWait(35);
         VERIFY_OK(guiqa::saveView(*window, "options-narrow"));
+        QJsonObject patternPixels;
+        const auto pathError = guiqa::inspectRenderedField(*pattern, patternPixels);
+        evidence["renderedPathFilter"] = patternPixels;
+        VERIFY_OK(pathError);
         VERIFY_OK(guiqa::inspectLayout(*window));
         QVERIFY2(window->width() <= std::min(760, available.width()) + 4, "Expanded options prevent narrow resizing");
 
@@ -354,6 +369,17 @@ private slots:
                 window->menuBar()->actionGeometry(fileMenu->menuAction()), menuInk);
             evidence["renderedMenuBar"] = menuInk;
             VERIFY_OK(barInk);
+            QJsonObject barItems;
+            for (QAction *action : window->menuBar()->actions()) {
+                if (!action->isEnabled() || !action->isVisible() || action->isSeparator())
+                    continue;
+                QJsonObject reading;
+                const auto error = guiqa::inspectMenuInk(*window->menuBar(),
+                    window->menuBar()->actionGeometry(action), reading);
+                barItems[action->text()] = reading;
+                VERIFY_OK(error);
+            }
+            evidence["renderedMenuBarItems"] = barItems;
             fileMenu->popup(window->menuBar()->mapToGlobal(QPoint(2, window->menuBar()->height())));
             QVERIFY(until([&] { return fileMenu->isVisible(); }, 3000));
             for (QAction *a : fileMenu->actions()) {

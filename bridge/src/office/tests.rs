@@ -329,33 +329,83 @@ fn recognized_errors_and_expansion_limits_are_distinct() {
 }
 
 #[test]
-fn real_word_97_document_through_installed_decoder() {
+fn portable_word97_reads_regular_streams_and_unicode_native_paths() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/desktop/fixtures/sample.doc");
     let folder =
         std::env::temp_dir().join(format!("Hello Needle archivo 文字 {}", std::process::id()));
     fs::create_dir(&folder).unwrap();
-    let spaced = folder.join("-writing sample.doc");
+    let spaced = folder.join("-escritura 日本語.doc");
     fs::copy(&path, &spaced).unwrap();
     let documents = [extract(&path, "doc"), extract(&spaced, "doc")];
     fs::remove_file(&spaced).unwrap();
     fs::remove_dir(&folder).unwrap();
     for result in documents {
-        match result {
-            Ok(Some(doc)) => {
-                let block = doc
-                    .blocks
-                    .iter()
-                    .find(|b| b.text.contains("Needle in the margin."))
-                    .unwrap();
-                assert!(block.location["paragraph"].as_u64().unwrap() > 1);
-            }
-            Err(e) if e.to_string() == "missing_decoder: antiword" => {
-                // Native packaging jobs install antiword and exercise the successful path.
-                eprintln!("optional antiword executable absent");
-            }
-            other => panic!("binary Word fixture: {other:?}"),
-        }
+        let doc = result.unwrap().unwrap();
+        let source = include_str!("../../../tests/desktop/fixtures/sample.txt");
+        assert_eq!(
+            texts(&doc),
+            source.lines().filter(|s| !s.is_empty()).collect::<Vec<_>>()
+        );
+        assert_eq!(doc.blocks[1].location["paragraph"], 2);
     }
+}
+
+#[test]
+fn portable_word97_reads_real_mini_streams_and_skips_deleted_and_hidden_runs() {
+    let short = read(
+        "doc",
+        include_bytes!("../../../tests/desktop/fixtures/short-word97.doc"),
+    )
+    .unwrap();
+    let expected = include_str!("../../../tests/desktop/fixtures/short-word97.txt");
+    assert_eq!(texts(&short), expected.lines().collect::<Vec<_>>());
+    let changed = read(
+        "doc",
+        include_bytes!("../../../tests/desktop/fixtures/revisions-word97.doc"),
+    )
+    .unwrap();
+    assert_eq!(texts(&changed), ["Visible revisión.", "Keep this ending."]);
+}
+
+#[test]
+fn portable_word97_distinguishes_encryption_other_ole_files_and_broken_table_streams() {
+    fn compound(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut file = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+        for (name, data) in entries {
+            file.create_stream(*name).unwrap().write_all(data).unwrap();
+        }
+        file.into_inner().into_inner()
+    }
+    let mut header = [0u8; 32];
+    header[..4].copy_from_slice(&[0xec, 0xa5, 0xc1, 0]);
+    header[11] = 1;
+    let encrypted = compound(&[("WordDocument", &header)]);
+    assert!(read("doc", &encrypted)
+        .unwrap_err()
+        .to_string()
+        .starts_with("encrypted_document:"));
+    header[11] = 0;
+    let broken = compound(&[("WordDocument", &header)]);
+    assert!(read("doc", &broken)
+        .unwrap_err()
+        .to_string()
+        .starts_with("corrupt_document:"));
+    header[2..4].copy_from_slice(&0x1234u16.to_le_bytes());
+    let unknown = compound(&[("WordDocument", &header)]);
+    assert!(read("doc", &unknown)
+        .unwrap_err()
+        .to_string()
+        .starts_with("unsupported_document:"));
+    let excel = compound(&[("Workbook", &[])]);
+    assert!(read("doc", &excel)
+        .unwrap_err()
+        .to_string()
+        .starts_with("unsupported_document:"));
+    let package = compound(&[("EncryptionInfo", &[]), ("EncryptedPackage", &[])]);
+    assert!(read("doc", &package)
+        .unwrap_err()
+        .to_string()
+        .starts_with("encrypted_document:"));
 }
 
 #[test]

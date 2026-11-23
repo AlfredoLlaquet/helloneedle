@@ -22,6 +22,7 @@
 #include <QStyleOptionButton>
 #include <QSysInfo>
 #include <QTest>
+#include <QTextBrowser>
 #include <QWidget>
 
 #include <algorithm>
@@ -55,6 +56,50 @@ double contrast(const QColor &fg, const QColor &bg)
     const double a = luminance(composite(fg, bg));
     const double b = luminance(bg);
     return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
+}
+
+constexpr double minimumTextContrast = 4.5;
+
+struct GlyphInk {
+    int visible = 0;
+    int core = 0;
+    double peak = 1;
+
+    void sample(double ratio, int count = 1)
+    {
+        if (ratio > 1.25) visible += count;
+        if (ratio >= minimumTextContrast) core += count;
+        peak = std::max(peak, ratio);
+    }
+
+    QString report(const QString &name, QJsonObject &numbers) const
+    {
+        // Antialiased edges blend with the background. Requiring multiple
+        // fully visible stroke pixels avoids both testing the edges and passing
+        // a blank field on the strength of a single dark pixel.
+        const int required = std::max(5, visible / 100);
+        numbers = {{"changedGlyphPixels", visible}, {"coreGlyphPixels", core},
+                   {"requiredCorePixels", required}, {"peakContrast", peak},
+                   {"minimumCoreContrast", minimumTextContrast}};
+        if (visible >= 10 && core >= required)
+            return {};
+        return QString("%1 has %2 core glyph pixels at 4.5:1 (%3 required), peak %4:1")
+            .arg(name).arg(core).arg(required).arg(peak, 0, 'f', 2);
+    }
+};
+
+QString compareTextPixels(const QImage &blank, const QImage &ink, const QRect &area,
+                          const QString &name, QJsonObject &metrics)
+{
+    if (blank.isNull() || ink.isNull() || blank.size() != ink.size())
+        return "Missing matching before/after captures for " + name;
+    GlyphInk glyphs;
+    const QRect bounds = area.intersected(ink.rect());
+    for (int y = bounds.top(); y <= bounds.bottom(); ++y)
+        for (int x = bounds.left(); x <= bounds.right(); ++x)
+            if (blank.pixel(x, y) != ink.pixel(x, y))
+                glyphs.sample(contrast(ink.pixelColor(x, y), blank.pixelColor(x, y)));
+    return glyphs.report(name, metrics);
 }
 
 QJsonArray dimensions(const QRect &rect)
@@ -212,7 +257,7 @@ QString inspectColors(QWidget &window, QJsonObject &colors)
     }
     auto *tree = window.findChild<QAbstractItemView *>("resultsView");
     measure(window.findChild<QWidget *>("previewText"), "preview/text", QPalette::Text, QPalette::Base, 4.5);
-    measure(window.findChild<QWidget *>("previewText"), "preview/placeholder", QPalette::PlaceholderText, QPalette::Base, 2.5);
+    measure(window.findChild<QWidget *>("previewText"), "preview/placeholder", QPalette::PlaceholderText, QPalette::Base, minimumTextContrast);
     measure(tree, "results/text", QPalette::Text, QPalette::Base, 4.5);
     measure(tree, "results/selected", QPalette::HighlightedText, QPalette::Highlight, 3.0);
     measure(window.findChild<QMenu *>("fileMenu"), "menu/text", QPalette::WindowText, QPalette::Window, 4.5);
@@ -236,65 +281,63 @@ QString inspectMenuInk(QWidget &menu, const QRect &action, QJsonObject &metrics)
     if (background == histogram.cend())
         return "Menu text capture is empty";
     const QColor base = QColor::fromRgb(background.key());
-    int visibleInk = 0;
-    double peak = 1;
-    for (auto it = histogram.cbegin(); it != histogram.cend(); ++it) {
-        const double ratio = contrast(QColor::fromRgb(it.key()), base);
-        if (ratio >= 2.6)
-            visibleInk += it.value();
-        peak = std::max(peak, ratio);
-    }
-    metrics = QJsonObject{{"changedGlyphPixels", visibleInk}, {"peakContrast", peak},
-                          {"background", base.name()}};
-    if (visibleInk < 5 || peak < 3.0)
-        return QString("Rendered menu text has %1 visible pixels at %2:1").arg(visibleInk).arg(peak, 0, 'f', 2);
-    return {};
+    GlyphInk glyphs;
+    for (auto it = histogram.cbegin(); it != histogram.cend(); ++it)
+        glyphs.sample(contrast(QColor::fromRgb(it.key()), base), it.value());
+    const QString failure = glyphs.report("Enabled menu label", metrics);
+    metrics["background"] = base.name();
+    return failure;
 }
 
 QString inspectRenderedField(QLineEdit &edit, QJsonObject &metrics)
 {
+    if (!edit.isEnabled() || !edit.isVisible() || edit.placeholderText().isEmpty())
+        return edit.objectName() + " is missing an enabled, visible prompt";
     const QString saved = edit.text(), hint = edit.placeholderText();
     edit.clearFocus();
     edit.clear();
     edit.setPlaceholderText({});
     const auto pixels = [&] { return edit.grab().toImage().convertToFormat(QImage::Format_RGB32); };
     const QImage blank = pixels();
-    QString failure;
-    auto measure = [&](const QString &label, double minimum) {
+    QStringList failures;
+    auto measure = [&](const QString &label) {
         const QImage ink = pixels();
-        if (blank.size() != ink.size() || ink.isNull()) {
-            failure += "Field screenshot unavailable. ";
-            return;
-        }
-        const int dpr = std::max(1, qRound(ink.devicePixelRatio()));
-        const QRect area(5*dpr, 3*dpr, std::max(1, ink.width()-22*dpr),
-                         std::max(1, ink.height()-6*dpr));
-        int count = 0;
-        double peak = 1;
-        for (int y = area.top(); y <= area.bottom(); ++y)
-            for (int x = area.left(); x <= area.right(); ++x) {
-                if (blank.pixel(x,y) == ink.pixel(x,y))
-                    continue;
-                const double value = contrast(ink.pixelColor(x,y), blank.pixelColor(x,y));
-                if (value > 1.25)
-                    ++count;
-                peak = std::max(peak, value);
-            }
-        metrics[label] = QJsonObject{{"changedGlyphPixels", count}, {"peakContrast", peak}};
-        if (count < 10 || peak < minimum)
-            failure += QString("%1 glyphs are missing or illegible (%2 pixels, %3:1). ")
-                .arg(label).arg(count).arg(peak, 0, 'f', 2);
+        const qreal dpr = ink.devicePixelRatio();
+        const int padding = qRound(3*dpr);
+        const int inset = qRound(5*dpr);
+        // Exclude the frame and the platform's clear button from the scan.
+        const QRect area(inset, padding, ink.width() - qRound(26*dpr), ink.height() - 2*padding);
+        QJsonObject reading;
+        const QString issue = compareTextPixels(blank, ink, area, edit.objectName() + "/" + label, reading);
+        metrics[label] = reading;
+        if (!issue.isEmpty())
+            failures.append(issue);
     };
-    if (!hint.isEmpty()) {
-        edit.setPlaceholderText(hint);
-        measure("placeholder", 2.1);
-    }
+    edit.setPlaceholderText(hint);
+    measure("placeholder");
     edit.setPlaceholderText({});
     edit.setText("Needle");
-    measure("enteredText", 3.5);
+    measure("enteredText");
     edit.setText(saved);
     edit.setPlaceholderText(hint);
-    return failure;
+    return failures.join(". ");
+}
+
+QString inspectPreviewPrompt(QTextBrowser &preview, QJsonObject &metrics)
+{
+    const auto prompt = preview.placeholderText();
+    if (!preview.isEnabled() || !preview.isVisible() || prompt.isEmpty() || !preview.toPlainText().isEmpty())
+        return "Enabled first-launch preview help is missing";
+    auto *viewport = preview.viewport();
+    const auto capture = [&] { return viewport->grab().toImage().convertToFormat(QImage::Format_RGB32); };
+    preview.setPlaceholderText({});
+    const QImage blank = capture();
+    preview.setPlaceholderText(prompt);
+    const QImage ink = capture();
+    // Only the first lines of the viewport contain the initial help paragraph.
+    const int height = qCeil((preview.fontMetrics().height()*3 + 12) * ink.devicePixelRatio());
+    const QRect area(0, 0, ink.width(), std::min(ink.height(), height));
+    return compareTextPixels(blank, ink, area, "Enabled preview help", metrics);
 }
 
 QString saveView(QWidget &widget, const QString &name)

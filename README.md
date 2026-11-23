@@ -26,7 +26,7 @@ Created by **Alfredo Llaquet-Alsina**. **Programmed by ChatGPT.** [Origins and c
 | Word DOCX, OpenDocument Text ODT and flat FODT | The matching paragraph, heading, or table passage with nearby text. Character formatting can divide a word across multiple runs in the source file. The search joins those runs. |
 | Excel XLSX and OpenDocument Spreadsheet ODS | The sheet and cell address. Text and stored values are searchable. |
 | PowerPoint PPTX and OpenDocument Presentation ODP | The slide containing the matching passage. |
-| RTF and legacy binary Word DOC | Readable text by paragraph. RTF is decoded in the worker. Older Word files use the separately installed antiword converter. |
+| RTF and legacy binary Word DOC | Readable text by paragraph. The worker reads RTF and Word 97–2003 binary documents directly, including short documents. Earlier Word variants use the antiword converter. |
 
 Office previews show a passage in reading order. Pagination and layout can differ from the originating word processor. Scanned PDFs need a text layer for searching. Protected, unsupported, damaged, and oversized documents can produce a per-file diagnostic while the folder search continues.
 
@@ -43,7 +43,7 @@ The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-wor
 
 ### Build from source
 
-The desktop build requires a C++17 compiler, Qt 6.4 or newer with Qt Widgets, CMake 3.21 or newer, Rust/Cargo 1.85 or newer, Python 3.9 or newer, and a build tool such as Ninja. The native GUI audit also uses Qt Test. PDF extraction and display require `pdftotext` and `pdftoppm`. The legacy DOC decoder needs antiword and its character maps.
+The desktop build requires a C++17 compiler, Qt 6.4 or newer with Qt Widgets, CMake 3.21 or newer, Rust/Cargo 1.85 or newer, Python 3.9 or newer, and a build tool such as Ninja. The native GUI audit also uses Qt Test. PDF extraction and display require `pdftotext` and `pdftoppm`. Pre-97 Word variants need antiword and its character maps.
 
 | Build host | Example dependencies |
 | --- | --- |

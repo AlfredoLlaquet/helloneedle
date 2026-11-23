@@ -13,9 +13,9 @@ from tempfile import TemporaryDirectory
 from document_fixtures import write_documents
 
 
-def exchange(executable, operation, payload, allow_errors=False):
+def exchange(executable, operation, payload, allow_errors=False, env=None):
     result = subprocess.run([str(executable), operation], input=json.dumps(payload).encode() + b"\n",
-                            capture_output=True, timeout=45)
+                            capture_output=True, timeout=45, env=env)
     events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     assert events, (operation, result.returncode, result.stderr.decode(errors="replace"))
     if not allow_errors:
@@ -62,7 +62,7 @@ def hashes(root):
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir() if p.is_file()}
 
 
-def verify_documents(worker, root, require_doc):
+def verify_documents(worker, root):
     write_documents(root)
     originals = hashes(root)
     hits, errors = search(worker, root, "Needle", allow_errors=True)
@@ -70,12 +70,7 @@ def verify_documents(worker, root, require_doc):
     for hit in hits:
         per_file.setdefault(Path(hit["path"]).name, []).append(hit)
     expected = set(originals)
-    antiword = shutil.which("antiword") is not None or (worker.parent / ("antiword.exe" if os.name == "nt" else "antiword")).exists()
-    if not (antiword or require_doc) and "sample.doc" not in per_file:
-        expected.remove("sample.doc")
-        assert errors and all("sample.doc" in str(e) for e in errors), errors
-    else:
-        assert not errors, errors
+    assert not errors, errors
     assert set(per_file) == expected, (set(per_file), expected, errors)
     for matches in per_file.values():
         for hit in matches:
@@ -100,6 +95,26 @@ def verify_documents(worker, root, require_doc):
         assert per_file[name][0]["location"].get("slide") == 2, (name, per_file[name])
     assert hashes(root) == originals, "Search or preview modified a fixture"
     print(f"{len(hits)} precise occurrences searched and previewed across {len(per_file)} formats")
+
+
+def verify_small_word(worker, root):
+    root.mkdir()
+    sample = root / "búsqueda – carta breve.doc"
+    shutil.copyfile(Path(__file__).with_name("fixtures") / "short-word97.doc", sample)
+    # Keep native Windows DLLs discoverable beside the worker. No converter on
+    # PATH is needed to decode a Word 97 compound file with short streams.
+    environment = dict(os.environ, PATH="")
+    events = exchange(worker, "search", {"folder": str(root), "query": "agulla 🧵"}, env=environment)
+    hits = [e for e in events if e["type"] == "match"]
+    assert len(hits) == 1, events
+    hit = hits[0]
+    assert utf16_slice(hit["text"], hit["start"], hit["length"]) == "agulla 🧵"
+    answer = exchange(worker, "preview", {"path": str(sample), "location": hit["location"]}, env=environment)
+    blocks = next(event["blocks"] for event in answer if event["type"] == "preview")
+    assert [block["text"] for block in blocks] == [
+        "Un café en la plaça.", "L’àvia escriu amb una agulla 🧵.", "Mañana habrá otra página."
+    ], blocks
+    print("Small Word 97 stream, accented paragraphs and Unicode match passed with an empty converter PATH")
 
 
 def verify_modes(worker, root):
@@ -168,12 +183,14 @@ def verify_native_names(worker, root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", type=Path, required=True)
-    parser.add_argument("--require-doc", action="store_true", help="require successful binary Word 97 extraction")
+    parser.add_argument("--require-doc", action="store_true", help="also verify genuine Word 97 short streams with an empty converter PATH")
     args = parser.parse_args()
     worker = args.worker.resolve(strict=True)
     with TemporaryDirectory(prefix="Hello Needle test ") as temp:
         root = Path(temp)
-        verify_documents(worker, root / "all formats", args.require_doc)
+        verify_documents(worker, root / "all formats")
+        if args.require_doc:
+            verify_small_word(worker, root / "small binary Word")
         verify_modes(worker, root / "markup")
         verify_options_and_recovery(worker, root / "search controls")
         verify_native_names(worker, root / "native names")

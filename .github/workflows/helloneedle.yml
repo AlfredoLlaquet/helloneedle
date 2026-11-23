@@ -74,15 +74,17 @@ jobs:
           if-no-files-found: error
 
   macos:
-    name: macOS 15 ${{ matrix.arch }}, Finder bundle and native Cocoa
+    name: macOS ${{ matrix.release }} ${{ matrix.arch }}, Finder bundle and native Cocoa
     needs: source
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - runner: macos-26
+            release: '26'
             arch: arm64
           - runner: macos-15-intel
+            release: '15'
             arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -127,13 +129,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: gui-evidence-macos-15-${{ matrix.arch }}-cocoa
+          name: gui-evidence-macos-${{ matrix.release }}-${{ matrix.arch }}-cocoa
           path: native-out/evidence/
           if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
         with:
-          name: helloneedle-macos-15-${{ matrix.arch }}
+          name: helloneedle-macos-${{ matrix.release }}-${{ matrix.arch }}
           path: native-out/packages/
           if-no-files-found: error
 
