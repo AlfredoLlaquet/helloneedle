@@ -55,7 +55,7 @@ def sdk_packages(manifest):
 
 def filenames(receipt, arch, darwin):
     name = receipt["name"]
-    build_id = f"{name}-{receipt['version']}_{receipt['revision']}{receipt['variants']}"
+    build_id = f"{name}-{receipt['version']}_{receipt['revision']}{receipt['variants'] or ''}"
     host_archive = Path(receipt["location"]).name
     names = []
     if host_archive.startswith(build_id + "."):
@@ -82,18 +82,27 @@ def download(url, destination):
 def verified_archive(receipt, arch, darwin, cache):
     signer = HOST_PREFIX / "libexec/macports/bin/signify"
     keys = sorted((HOST_PREFIX / "share/macports/keys/archives").glob("*.pub"))
+    legacy_key = HOST_PREFIX / "share/macports/macports-pubkey.pem"
     if not signer.is_file() or not keys:
         raise ValueError("MacPorts's installed archive verification program and public keys are required")
     for name in filenames(receipt, arch, darwin):
         path = cache / name
-        sig = cache / (name + ".sig")
         for mirror in MIRRORS:
             url = mirror + "/" + quote(receipt["name"], safe="") + "/" + quote(name, safe="+")
-            if not download(url + ".sig", sig) or not download(url, path):
+            sig = cache / (name + ".sig")
+            if download(url + ".sig", sig):
+                checks = [(key, [signer, "-V", "-p", key, "-x", sig, "-m", path]) for key in keys]
+            else:
+                # Older MacPorts archives have the project's original RSA signature.
+                sig = cache / (name + ".rmd160")
+                if not legacy_key.is_file() or not download(url + ".rmd160", sig):
+                    continue
+                checks = [(legacy_key, ["openssl", "dgst", "-ripemd160", "-verify", legacy_key,
+                                        "-signature", sig, path])]
+            if not download(url, path):
                 continue
-            for key in keys:
-                status = subprocess.run([signer, "-V", "-p", key, "-x", sig, "-m", path],
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for key, args in checks:
+                status = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if status.returncode == 0:
                     return path, url, key.name
             raise ValueError(f"MacPorts archive signature verification failed for {url}")
@@ -119,7 +128,7 @@ def unpack(archive, prefix, receipt, arch):
                 for line in lines:
                     if line.startswith("@"):
                         key, _, value = line.partition(" ")
-                        if key in {"@portname", "@portversion", "@portrevision", "@portepoch", "@archs"}:
+                        if key in {"@name", "@portname", "@portversion", "@portrevision", "@portepoch", "@archs"}:
                             contents[key] = value
                 continue
             rel = relative_member(member.name)
@@ -156,7 +165,8 @@ def unpack(archive, prefix, receipt, arch):
     for path, target in hardlinks:
         target.resolve(strict=True).relative_to(prefix)
         os.link(target, path)
-    expected = {"@portname": receipt["name"], "@portversion": str(receipt["version"]),
+    expected = {"@name": f"{receipt['name']}-{receipt['version']}_{receipt['revision']}{receipt['variants'] or ''}",
+                "@portname": receipt["name"], "@portversion": str(receipt["version"]),
                 "@portrevision": str(receipt["revision"]), "@portepoch": str(receipt["epoch"] or 0)}
     architectures = contents.get("@archs", "").split()
     if any(contents.get(k) != v for k, v in expected.items()) or not ({arch, "noarch"} & set(architectures)):

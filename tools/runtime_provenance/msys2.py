@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
+import os
 import re
-import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 
@@ -63,13 +65,60 @@ def owners(root, files):
     return groups
 
 
-def verify_signature(root, signature, archive):
-    bash = root / "usr/bin/bash.exe"
-    if not bash.exists():
-        bash = Path(shutil.which("bash") or "bash")
-    check = 'exec /usr/bin/pacman-key --verify "$(/usr/bin/cygpath -au "$1")" "$(/usr/bin/cygpath -au "$2")"'
-    subprocess.run([str(bash), "-c", check, "verify-runtime-source", str(signature.resolve()), str(archive.resolve())],
-                   check=True)
+def msys_paths(root, *paths):
+    args = [str(path.resolve()) for path in paths]
+    if os.name == "nt":
+        result = subprocess.run([str(root / "usr/bin/cygpath.exe"), "-au", *args],
+                                check=True, capture_output=True, text=True)
+        return result.stdout.splitlines()
+    return args
+
+
+@contextmanager
+def signing_keys(root):
+    # The distributor ships public keys and a separate list of disabled fingerprints.
+    # gpgv needs only these inputs; pacman's writable administrator keyring is unnecessary.
+    distribution_keys = root / "usr/share/pacman/keyrings"
+    keys = (distribution_keys / "msys2.gpg").read_bytes()
+    revoked = {line.split("#", 1)[0].strip().upper() for line in
+               (distribution_keys / "msys2-revoked").read_text(encoding="ascii").splitlines()}
+    revoked.discard("")
+    if any(not re.fullmatch(r"[0-9A-F]{40}|[0-9A-F]{64}", fpr) for fpr in revoked):
+        raise ValueError("Invalid fingerprint in MSYS2's revoked-key list")
+    binaries = root / "usr/bin"
+    gpg = str(binaries / "gpg.exe") if os.name == "nt" else "gpg"
+    gpgv = str(binaries / "gpgv.exe") if os.name == "nt" else "gpgv"
+    with tempfile.TemporaryDirectory(prefix="helloneedle-msys2-keys-") as temporary:
+        home = Path(temporary)
+        ring = home / "distribution.gpg"
+        home_arg, ring_arg = msys_paths(root, home, ring)
+        if b"-----BEGIN PGP PUBLIC KEY BLOCK-----" in keys:
+            keys = subprocess.run([gpg, "--no-options", "--batch", "--homedir", home_arg, "--dearmor"],
+                                  input=keys, stdout=subprocess.PIPE, check=True).stdout
+        ring.write_bytes(keys)
+        yield [gpgv, "--homedir", home_arg, "--keyring", ring_arg, "--status-fd", "1"], revoked
+
+
+def verified_signer(status, revoked):
+    records = [line.split()[1:] for line in status.splitlines() if line.startswith("[GNUPG:] ")]
+    failure = {"BADSIG", "ERRSIG", "NO_PUBKEY", "EXPKEYSIG", "EXPSIG", "REVKEYSIG", "KEYREVOKED", "SIGEXPIRED"}
+    if any(entry[0] in failure for entry in records):
+        raise ValueError("MSYS2 archive has an invalid or expired signature")
+    valid = [entry for entry in records if entry[0] == "VALIDSIG"]
+    if len(valid) != 1 or len(valid[0]) < 10:
+        raise ValueError("Expected one verified MSYS2 archive signature")
+    signer = valid[0][1].upper()
+    primary = valid[0][10].upper() if len(valid[0]) > 10 else signer
+    if {signer, primary} & revoked:
+        raise ValueError(f"MSYS2 revoked the archive signer {primary}")
+    return {"signingFingerprint": signer, "primaryFingerprint": primary}
+
+
+def verify_signature(root, verifier, signature, archive):
+    command, revoked = verifier
+    result = subprocess.run([*command, "--", *msys_paths(root, signature, archive)],
+                            check=True, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    return verified_signer(result.stdout, revoked)
 
 
 def signed_source_inputs(key, metadata, members):
@@ -119,7 +168,7 @@ def collect(files, notices_root, output):
         archive = destination / filename
         signature = destination / (filename + ".sig")
         download(url + ".sig", signature)
-        verify_signature(root, signature, archive)
+        signer = verify_signature(root, verifier, signature, archive)
         notices = Notices(notices_root / "texts")
         for path in sorted(group.pop("notices")):
             notices.installed(path)
@@ -131,8 +180,8 @@ def collect(files, notices_root, output):
         return key, {"binaryPackages": group["binaryPackages"], "files": sorted(group["origins"]),
                      "sources": [{"file": archive.relative_to(output).as_posix(), "url": url,
                                   "sha256": digest(archive), "signature": signature.relative_to(output).as_posix(),
-                                  "recipeInputs": inputs}],
+                                  "recipeInputs": inputs, **signer}],
                      "notices": notices.references}
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with signing_keys(root) as verifier, ThreadPoolExecutor(max_workers=3) as executor:
         return dict(executor.map(package, sorted(groups.items())))
