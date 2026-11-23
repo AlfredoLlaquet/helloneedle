@@ -47,7 +47,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build qt6-base-dev qt6-qpa-plugins \
-            qt6-gtk-platformtheme poppler-utils antiword dpkg-dev xvfb openbox dbus-daemon \
+            qt6-gtk-platformtheme qt6-translations-l10n poppler-utils antiword dpkg-dev xvfb openbox dbus-daemon \
             fonts-dejavu-core libxcb-cursor0
       - run: python3 packaging/native_ci.py build
       - name: Install and test the package
@@ -82,12 +82,13 @@ jobs:
           persist-credentials: false
       - name: Install Homebrew dependencies
         run: |
-          brew install qtbase poppler antiword ninja
+          brew install qtbase qttranslations poppler antiword ninja
           echo "CMAKE_PREFIX_PATH=$(brew --prefix qtbase)" >> "$GITHUB_ENV"
       - run: python3 packaging/native_ci.py build
       - name: Extract, verify the signature, and test the application
         run: |
           mkdir -p "native-out/Installed Applications"
+          (cd native-out/packages && shasum -a 256 -c SHA256SUMS)
           ditto -x -k native-out/packages/*.zip "native-out/Installed Applications"
           codesign --verify --deep --strict "native-out/Installed Applications/Hello Needle.app"
           python3 packaging/native_ci.py verify --prefix "native-out/Installed Applications" \
@@ -121,7 +122,7 @@ jobs:
           envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA CARGO_BUILD_JOBS'
           prepare: |
             set -eu
-            pkg install -y git cmake ninja rust qt6-base poppler-utils antiword python3 \
+            pkg install -y git cmake ninja rust qt6-base qt6-translations poppler-utils antiword python3 \
               xorg-vfbserver openbox dbus dejavu
             dbus-uuidgen --ensure
           run: |
@@ -176,7 +177,8 @@ jobs:
           update: true
           install: >-
             git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-translations
+            mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-antiword
       - shell: msys2 {0}
         run: python3 packaging/native_ci.py build
@@ -222,7 +224,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            git mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-python
+            git mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-translations mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-antiword
       - name: Extract and test the shipped x64 executables on the Windows desktop
         shell: msys2 {0}

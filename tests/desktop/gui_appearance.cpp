@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
 #include <QImage>
 #include <QJsonArray>
 #include <QLabel>
@@ -115,7 +116,7 @@ QString setAppearance(QApplication &app, const QString &requested)
 #endif
 #if !defined(Q_OS_WIN) && !defined(Q_OS_MACOS)
     app.setPalette(x11Palette(app.palette(), wantDark));
-    return "explicit X11 test palette";
+    return "explicit test palette on " + QGuiApplication::platformName();
 #else
     // Do not hide a production native dark-mode failure by repainting the test.
     return "native theme request was not honored";
@@ -207,14 +208,47 @@ QString inspectColors(QWidget &window, QJsonObject &colors)
         auto *w = window.findChild<QLineEdit *>(name);
         measure(w, name + "/text", QPalette::Text, QPalette::Base, 4.5);
         if (w && !w->placeholderText().isEmpty())
-            measure(w, name + "/placeholder", QPalette::PlaceholderText, QPalette::Base, 2.5);
+            measure(w, name + "/placeholder", QPalette::PlaceholderText, QPalette::Base, 4.5);
     }
     auto *tree = window.findChild<QAbstractItemView *>("resultsView");
+    measure(window.findChild<QWidget *>("previewText"), "preview/text", QPalette::Text, QPalette::Base, 4.5);
+    measure(window.findChild<QWidget *>("previewText"), "preview/placeholder", QPalette::PlaceholderText, QPalette::Base, 2.5);
     measure(tree, "results/text", QPalette::Text, QPalette::Base, 4.5);
     measure(tree, "results/selected", QPalette::HighlightedText, QPalette::Highlight, 3.0);
     measure(window.findChild<QMenu *>("fileMenu"), "menu/text", QPalette::WindowText, QPalette::Window, 4.5);
     measure(window.findChild<QAbstractButton *>("searchButton"), "button/label", QPalette::ButtonText, QPalette::Button, 4.5);
     return failure;
+}
+
+QString inspectMenuInk(QWidget &menu, const QRect &action, QJsonObject &metrics)
+{
+    const QRect inner = action.adjusted(3, 3, -3, -3);
+    if (inner.isEmpty())
+        return "Menu label has no visible area";
+    QImage shot = menu.grab(inner).toImage().convertToFormat(QImage::Format_RGB32);
+    if (shot.isNull())
+        return "Menu text capture is unavailable";
+    QHash<QRgb, int> histogram;
+    for (int y = 0; y < shot.height(); ++y)
+        for (int x = 0; x < shot.width(); ++x)
+            ++histogram[shot.pixel(x, y)];
+    const auto background = std::max_element(histogram.cbegin(), histogram.cend());
+    if (background == histogram.cend())
+        return "Menu text capture is empty";
+    const QColor base = QColor::fromRgb(background.key());
+    int visibleInk = 0;
+    double peak = 1;
+    for (auto it = histogram.cbegin(); it != histogram.cend(); ++it) {
+        const double ratio = contrast(QColor::fromRgb(it.key()), base);
+        if (ratio >= 2.6)
+            visibleInk += it.value();
+        peak = std::max(peak, ratio);
+    }
+    metrics = QJsonObject{{"changedGlyphPixels", visibleInk}, {"peakContrast", peak},
+                          {"background", base.name()}};
+    if (visibleInk < 5 || peak < 3.0)
+        return QString("Rendered menu text has %1 visible pixels at %2:1").arg(visibleInk).arg(peak, 0, 'f', 2);
+    return {};
 }
 
 QString inspectRenderedField(QLineEdit &edit, QJsonObject &metrics)
@@ -294,7 +328,14 @@ bool makeReviewSheet(const QString &root)
     for (qsizetype i = 0; i < panels.size(); ++i) {
         const auto &panel = panels.at(i);
         const QString rel = panel.name + "/" + panel.state;
-        const QImage source(QDir(root).filePath(rel + ".png"));
+        QImage source;
+        if (panel.name == "system") {
+            source.load(QDir(root).filePath(panel.name + "/first-launch-frame.png"));
+            if (source.isNull())
+                source.load(QDir(root).filePath(panel.name + "/first-launch-native.png"));
+        }
+        if (source.isNull())
+            source.load(QDir(root).filePath(rel + ".png"));
         const int x = static_cast<int>(i % 2) * tileWidth + 8;
         const int y = static_cast<int>(i / 2) * tileHeight + 5;
         painter.setPen(QColor("#1a1e22"));

@@ -17,6 +17,7 @@ public:
     void open(const QJsonObject &match, const QJsonObject &location);
     void clear();
     void retranslate();
+    int currentPage() const { return page; }
 protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
@@ -42,4 +43,3 @@ private:
     int pages = 0;
 };
 }
-

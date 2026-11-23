@@ -8,6 +8,12 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTimer>
+#ifdef Q_OS_UNIX
+#include <signal.h>
+#include <unistd.h>
+#elif defined(Q_OS_WIN)
+#include <qt_windows.h>
+#endif
 
 namespace hn {
 QString findTool(const QString &name)
@@ -45,9 +51,16 @@ void WorkerClient::stop()
         old->disconnect(this);
         if (old->state() != QProcess::NotRunning) {
             connect(old, &QProcess::finished, old, &QObject::deleteLater);
+#ifdef Q_OS_UNIX
+            const pid_t pid = static_cast<pid_t>(old->processId());
+            if (pid > 0 && ::getpgid(pid) == pid) ::kill(-pid, SIGKILL);
+#endif
             old->kill();
         } else old->deleteLater();
     }
+#ifdef Q_OS_WIN
+    if (processTree) { CloseHandle(processTree); processTree = nullptr; }
+#endif
     pending.clear();
     onEvent = {};
     onFinished = {};
@@ -96,7 +109,26 @@ void WorkerClient::start(const QString &command, const QJsonObject &request, Eve
     process = new QProcess(this);
     auto *job = process;
     job->setStandardErrorFile(QProcess::nullDevice());
-    connect(job, &QProcess::started, this, [job, request] {
+#ifdef Q_OS_UNIX
+    // A query may start a PDF or Word decoder. Stop the full group when its
+    // owning search is canceled, even while the decoder is still reading.
+    job->setChildProcessModifier([] { ::setpgid(0, 0); });
+#endif
+    connect(job, &QProcess::started, this, [this, job, request] {
+#ifdef Q_OS_WIN
+        // Assign before sending the request, so descendants enter the job
+        // before processing their first document.
+        auto group = CreateJobObjectW(nullptr, nullptr);
+        if (group) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            auto child = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, DWORD(job->processId()));
+            if (child && SetInformationJobObject(group, JobObjectExtendedLimitInformation, &limits, sizeof(limits))
+                && AssignProcessToJobObject(group, child)) processTree = group;
+            else CloseHandle(group);
+            if (child) CloseHandle(child);
+        }
+#endif
         job->write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
         job->closeWriteChannel();
     });
@@ -116,4 +148,3 @@ void WorkerClient::start(const QString &command, const QJsonObject &request, Eve
     job->start(program, {command});
 }
 }
-

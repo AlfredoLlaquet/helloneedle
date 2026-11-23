@@ -16,6 +16,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -62,8 +63,8 @@ void MainWindow::buildControls()
     browse = new QPushButton(body);
     browse->setObjectName("browseButton");
     fields->addWidget(folderLabel, 0, 0);
-    fields->addWidget(folderEdit, 0, 1);
-    fields->addWidget(browse, 0, 2, 1, 2);
+    fields->addWidget(folderEdit, 0, 1, 1, 2);
+    fields->addWidget(browse, 0, 3);
     queryEdit = line("queryEdit");
     queryEdit->setClearButtonEnabled(true);
     queryLabel = new QLabel(body);
@@ -121,6 +122,7 @@ void MainWindow::buildControls()
     splitter = new QSplitter(Qt::Horizontal, body);
     splitter->setObjectName("resultSplitter");
     splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(7);
     auto *left = new QWidget(splitter);
     auto *leftLayout = new QVBoxLayout(left);
     leftLayout->setContentsMargins(0, 0, 0, 0);
@@ -138,6 +140,8 @@ void MainWindow::buildControls()
     results->setMinimumSize(110, 50);
     leftLayout->addWidget(results);
     preview = new PreviewPane(splitter);
+    if (const auto *openButton = preview->findChild<QPushButton *>("openOriginalButton"))
+        resultsLabel->setMinimumHeight(openButton->sizeHint().height());
     splitter->addWidget(left);
     splitter->addWidget(preview);
     splitter->setStretchFactor(0, 2);
@@ -253,9 +257,20 @@ void MainWindow::setFolder(const QString &path) { folderEdit->setText(QDir::toNa
 
 void MainWindow::chooseFolder()
 {
-    const auto selected = QFileDialog::getExistingDirectory(this, ui("Choose a folder"), folderEdit->text());
-    if (selected.isEmpty()) return;
-    setFolder(selected);
+    QFileDialog dialog(this);
+    const auto os = QLocale(systemLanguage(QLocale::system().uiLanguages())).language();
+    const auto selectedLanguage = currentLanguage() == "es" ? QLocale::Spanish : QLocale::English;
+    if (os != selectedLanguage) dialog.setOption(QFileDialog::DontUseNativeDialog);
+    dialog.setWindowTitle(ui("Choose a folder"));
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setOption(QFileDialog::ShowDirsOnly);
+    dialog.setDirectory(folderEdit->text());
+    dialog.setLabelText(QFileDialog::LookIn, ui("Look in:"));
+    dialog.setLabelText(QFileDialog::FileName, ui("Folder:"));
+    dialog.setLabelText(QFileDialog::Accept, ui("Select folder"));
+    dialog.setLabelText(QFileDialog::Reject, ui("Cancel"));
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+    setFolder(dialog.selectedFiles().constFirst());
     queryEdit->setFocus();
 }
 
@@ -523,4 +538,3 @@ void MainWindow::changeEvent(QEvent *event)
         adjustTextContrast();
 }
 }
-

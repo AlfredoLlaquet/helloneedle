@@ -22,4 +22,3 @@ qt_add_resources(helloneedle-desktop hello_needle_licenses
 
 qt_add_executable(helloneedle main.cpp)
 target_link_libraries(helloneedle PRIVATE helloneedle-desktop)
-

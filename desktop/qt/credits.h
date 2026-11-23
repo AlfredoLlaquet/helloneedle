@@ -4,4 +4,3 @@ class QWidget;
 namespace hn {
 void showCredits(QWidget *parent, bool licenses);
 }
-

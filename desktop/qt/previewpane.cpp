@@ -61,7 +61,20 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this)
     stack->addWidget(pdf);
     layout->addWidget(stack, 1);
     connect(open, &QPushButton::clicked, this, &PreviewPane::openOriginal);
-    connect(toggle, &QPushButton::clicked, this, [this] { chooseView(stack->currentWidget() != pdf); });
+    connect(toggle, &QPushButton::clicked, this, [this] {
+        const bool showPage = stack->currentWidget() != pdf;
+        chooseView(showPage);
+        if (!showPage && pdf->currentPage() != textPage) {
+            const auto original = match.value("location").toObject();
+            const int page = pdf->currentPage();
+            const QJsonObject location = page == original.value("page").toInt()
+                ? original : QJsonObject{{"page", page}};
+            text->clear();
+            text->setExtraSelections({});
+            text->setPlaceholderText(ui("Loading preview…"));
+            load(location, false);
+        }
+    });
     clear();
     retranslate();
 }
@@ -72,6 +85,7 @@ void PreviewPane::clear()
     pdf->clear();
     hasPdf = false;
     received = false;
+    textPage = 0;
     match = {};
     open->setEnabled(false);
     toggle->hide();
@@ -131,19 +145,26 @@ void PreviewPane::showMatch(const QJsonObject &event)
     place->setVisible(!place->text().isEmpty());
     open->setEnabled(true);
     text->setPlaceholderText(ui("Loading preview…"));
+    load(match.value("location").toObject(), true);
+}
+
+void PreviewPane::load(const QJsonObject &location, bool first)
+{
+    received = false;
     QJsonObject request;
-    for (const auto *key : {"path", "pathBytes", "pathEncoding", "location", "mode", "revision"})
+    for (const auto *key : {"path", "pathBytes", "pathEncoding", "mode", "revision"})
         if (match.contains(key)) request.insert(key, match.value(key));
-    worker.start("preview", request, [this](const QJsonObject &data) {
+    request.insert("location", location);
+    worker.start("preview", request, [this, first](const QJsonObject &data) {
         const auto type = data.value("type").toString();
-        if (type == "preview") { received = true; present(data); }
+        if (type == "preview") { received = true; present(data, first); }
         else if (type == "error") { received = true; displayError(workerError(data)); }
     }, [this](const QString &error) {
         if (!received) displayError(error.isEmpty() ? ui("The worker returned an unreadable response.") : error);
     });
 }
 
-void PreviewPane::present(const QJsonObject &data)
+void PreviewPane::present(const QJsonObject &data, bool first)
 {
     text->clear();
     text->setPlaceholderText(ui("This document contains no previewable text."));
@@ -188,13 +209,15 @@ void PreviewPane::present(const QJsonObject &data)
             selectedSpot = location;
         }
     }
+    textPage = selectedSpot.value("page").toInt();
     if (selectedStart >= 0) {
         const int begin = qBound(0, match.value("blockStart").toInt(match.value("start").toInt()), selectedSize);
         const int length = qBound(0, match.value("blockLength").toInt(match.value("length").toInt()), selectedSize - begin);
         QTextCursor target(text->document());
         target.setPosition(selectedStart + (match.value("kind") == "filename" ? 0 : begin));
         text->setTextCursor(target);
-        if (length && match.value("kind") != "filename") {
+        const int originalPage = match.value("location").toObject().value("page").toInt();
+        if (length && match.value("kind") != "filename" && textPage == originalPage) {
             target.setPosition(selectedStart + begin + length, QTextCursor::KeepAnchor);
             QTextEdit::ExtraSelection highlight;
             highlight.cursor = target;
@@ -204,10 +227,11 @@ void PreviewPane::present(const QJsonObject &data)
         }
         text->ensureCursorVisible();
     }
-    hasPdf = kind == "pdf" && !selectedSpot.isEmpty();
-    toggle->setVisible(hasPdf);
-    if (hasPdf) pdf->open(match, selectedSpot);
-    chooseView(hasPdf);
+    if (first) {
+        hasPdf = kind == "pdf" && !selectedSpot.isEmpty();
+        toggle->setVisible(hasPdf);
+        if (hasPdf) pdf->open(match, selectedSpot);
+        chooseView(hasPdf);
+    }
 }
 }
-

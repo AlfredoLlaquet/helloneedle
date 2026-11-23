@@ -14,7 +14,11 @@
 #include <QSplitter>
 #include <QVBoxLayout>
 
-static void registerLicenses() { Q_INIT_RESOURCE(hello_needle_licenses); }
+static void registerLicenses()
+{
+    static const bool registered = [] { Q_INIT_RESOURCE(hello_needle_licenses); return true; }();
+    Q_UNUSED(registered);
+}
 
 namespace hn {
 void showCredits(QWidget *parent, bool licenses)
@@ -87,4 +91,3 @@ void showCredits(QWidget *parent, bool licenses)
     dialog.exec();
 }
 }
-

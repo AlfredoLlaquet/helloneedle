@@ -148,4 +148,3 @@ QString workerError(const QJsonObject &event)
     return ui(errors.value(code, "The document could not be decoded."));
 }
 }
-

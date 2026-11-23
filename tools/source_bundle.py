@@ -56,8 +56,7 @@ ADDITIONAL_NOTICES = {
 }
 
 
-def dependency_notices(directory):
-    directory.mkdir(parents=True, exist_ok=True)
+def write_notices(directory):
     manifest = run_text("cargo", "metadata", "--locked", "--format-version", "1", "--manifest-path", str(MANIFEST))
     metadata = json.loads(manifest)
     crates = [p for p in metadata["packages"] if p["source"]]
@@ -95,6 +94,29 @@ def dependency_notices(directory):
     )
     (directory / "DEPENDENCIES.md").write_text(inventory + "\n".join(rows) + "\n", encoding="utf-8")
     print(f"Collected original notices for {len(crates)} locked Rust packages.", flush=True)
+
+
+def dependency_notices(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".notices-", dir=directory) as temp:
+        staging = Path(temp)
+        write_notices(staging)
+        old_crates = directory / "crates"
+        backup = staging / "previous-crates"
+        index = directory / "DEPENDENCIES.md"
+        if old_crates.exists():
+            if not index.is_file() or not index.read_text(encoding="utf-8").startswith("# Rust dependency notices"):
+                raise RuntimeError(f"Refusing to replace an unrelated crates directory in {directory}")
+            old_crates.rename(backup)
+        try:
+            (staging / "crates").rename(old_crates)
+            (staging / "DEPENDENCIES.md").replace(index)
+        except OSError:
+            if old_crates.exists():
+                old_crates.rename(staging / "incomplete-crates")
+            if backup.exists():
+                backup.rename(old_crates)
+            raise
 
 
 def archive_info(name, size, timestamp, executable=False):

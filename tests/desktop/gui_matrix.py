@@ -19,7 +19,7 @@ from document_fixtures import write_documents
 
 FULL = [
     "firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "wordAndOfficePreviews",
-    "markupModes", "pdfNavigation", "optionsAndCancellation", "helpAndCredits",
+    "markupModes", "pdfNavigation", "optionsAndCancellation", "languageMenu", "helpAndCredits",
 ]
 SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat"]
 
@@ -51,7 +51,7 @@ def hosted_theme(appearance):
 
         name = "AppsUseLightTheme"
         path = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
             try:
                 previous = winreg.QueryValueEx(key, name)
             except FileNotFoundError:
@@ -59,7 +59,11 @@ def hosted_theme(appearance):
 
             def broadcast():
                 # Windows' setting-change signal lets shell widgets re-read ImmersiveColorSet.
-                ctypes.windll.user32.SendNotifyMessageW(0xffff, 0x001A, 0, "ImmersiveColorSet")
+                send = ctypes.windll.user32.SendMessageTimeoutW
+                send.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p,
+                                 ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
+                message = ctypes.c_wchar_p("ImmersiveColorSet")
+                send(0xffff, 0x001A, 0, ctypes.cast(message, ctypes.c_void_p), 2, 120, None)
 
             winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, int(appearance == "light"))
             broadcast()
@@ -152,6 +156,7 @@ def main():
         parser.error("A native X11 display is required. Run the matrix inside Xvfb on a headless runner.")
     output.mkdir(parents=True, exist_ok=True)
     cases = []
+    review = None
     with tempfile.TemporaryDirectory(prefix="helloneedle-gui-") as temp:
         scratch = Path(temp)
         docs = scratch / "sample documents"
@@ -167,7 +172,7 @@ def main():
                 continue
             # Capture into a new directory. Earlier pictures cannot turn a failed
             # run into a pass, and unrelated files in the output path stay intact.
-            directory = scratch / ("evidence-" + spec[0])
+            directory = scratch / "screens" / spec[0]
             case = run_case(tester, worker, docs, scratch / ("settings-" + spec[0]), directory, spec, plugin)
             destination = output / spec[0]
             destination.mkdir(exist_ok=True)
@@ -175,10 +180,12 @@ def main():
                 shutil.copy2(produced, destination / produced.name)
             cases.append(case)
         unchanged = before == digest()
-    review = None
-    if not args.scenario:
-        review = subprocess.run([str(tester), "--make-review", str(output)],
-                                env={**os.environ, "QT_QPA_PLATFORM": plugin}).returncode == 0
+        if not args.scenario:
+            current = scratch / "screens"
+            review = subprocess.run([str(tester), "--make-review", str(current)],
+                                    env={**os.environ, "QT_QPA_PLATFORM": plugin}).returncode == 0
+            if (current / "review.png").exists():
+                shutil.copy2(current / "review.png", output / "review.png")
     manifest = {"os": platform.platform(), "platformPlugin": plugin, "nativeAcceptance": not args.supplementary_offscreen,
                 "fixturesUnchanged": unchanged,
                 "reviewSheetComplete": review, "scenarios": cases}

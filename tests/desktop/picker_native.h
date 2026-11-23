@@ -12,3 +12,8 @@ struct NativePickerProbe {
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
 void dismissNativeDirectoryPicker(const std::shared_ptr<NativePickerProbe> &probe);
 #endif
+
+#ifdef Q_OS_MACOS
+#include <QStringList>
+QStringList cocoaMenuTitles();
+#endif

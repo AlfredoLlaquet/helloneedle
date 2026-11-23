@@ -28,3 +28,13 @@ void dismissNativeDirectoryPicker(const std::shared_ptr<NativePickerProbe> &prob
     auto ownedProbe = probe;
     dispatch_async(dispatch_get_main_queue(), ^{ waitForPanel(ownedProbe, 120); });
 }
+
+QStringList cocoaMenuTitles()
+{
+    QStringList titles;
+    for (NSMenuItem *item in NSApp.mainMenu.itemArray) {
+        if (!item.hidden && item.title.length > 0)
+            titles.append(QString::fromUtf8(item.title.UTF8String));
+    }
+    return titles;
+}

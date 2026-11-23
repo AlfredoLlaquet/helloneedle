@@ -202,7 +202,7 @@ void PdfPane::draw(bool centerMatch)
             selection = selection.united(rect);
         }
     }
-    const double dpr = image->devicePixelRatioF();
+    const double dpr = qMin(image->devicePixelRatioF(), 4096.0 / qMax(size.width(), size.height()));
     QPixmap pixmap = QPixmap::fromImage(annotated.scaled(size * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     pixmap.setDevicePixelRatio(dpr);
     image->setPixmap(pixmap);
@@ -219,4 +219,3 @@ bool PdfPane::eventFilter(QObject *object, QEvent *event)
     return QWidget::eventFilter(object, event);
 }
 }
-

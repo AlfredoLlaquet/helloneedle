@@ -4,4 +4,3 @@ class QApplication;
 namespace hn {
 void initializeApplication(QApplication &app);
 }
-

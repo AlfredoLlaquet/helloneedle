@@ -21,9 +21,11 @@ private:
     void consume(bool final);
     void finish(const QString &error);
     QProcess *process = nullptr;
+#ifdef Q_OS_WIN
+    void *processTree = nullptr;
+#endif
     QByteArray pending;
     Event onEvent;
     Finished onFinished;
 };
 }
-

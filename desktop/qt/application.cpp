@@ -42,15 +42,14 @@ namespace hn {
 void initializeApplication(QApplication &app)
 {
     app.setOrganizationName(QStringLiteral("Hello Needle"));
-    app.setOrganizationDomain(QStringLiteral("helloneedle.alfredollaquet"));
+    app.setOrganizationDomain(QStringLiteral("thecrumbs.org"));
     app.setApplicationName(QStringLiteral("helloneedle"));
     app.setApplicationDisplayName(QStringLiteral("Hello Needle"));
     app.setApplicationVersion(QStringLiteral(HN_VERSION));
-    app.setDesktopFileName(QStringLiteral("helloneedle"));
+    app.setDesktopFileName(QStringLiteral("org.thecrumbs.HelloNeedle"));
     app.setWindowIcon(needleIcon());
     QSettings settings;
     const QString language = settings.value(QStringLiteral("interface/language")).toString();
     setLanguage(language.isEmpty() ? systemLanguage(QLocale::system().uiLanguages()) : language);
 }
 }
-

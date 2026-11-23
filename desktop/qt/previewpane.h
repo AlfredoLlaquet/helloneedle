@@ -19,7 +19,8 @@ public:
     void retranslate();
     void openOriginal();
 private:
-    void present(const QJsonObject &data);
+    void load(const QJsonObject &location, bool first);
+    void present(const QJsonObject &data, bool first);
     void displayError(const QString &message);
     void chooseView(bool page);
     QJsonObject match;
@@ -33,6 +34,6 @@ private:
     PdfPane *pdf;
     bool hasPdf = false;
     bool received = false;
+    int textPage = 0;
 };
 }
-

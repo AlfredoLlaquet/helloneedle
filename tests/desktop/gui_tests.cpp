@@ -25,12 +25,14 @@
 #include <QPlainTextEdit>
 #include <QScreen>
 #include <QSettings>
+#include <QSet>
 #include <QStyle>
 #include <QStandardPaths>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeWidget>
 
 #include <functional>
@@ -52,6 +54,23 @@ bool until(const std::function<bool()> &condition, int timeout = 15000)
         QTest::qWait(20);
     } while (timer.elapsed() < timeout);
     return condition();
+}
+
+bool saveNative(const QPixmap &pixmap, const QString &name)
+{
+    if (pixmap.isNull() || pixmap.width() < 40 || pixmap.height() < 14)
+        return false;
+    // Some macOS desktops restrict screen reads. A transparent or single-color
+    // buffer does not count as a native visual capture.
+    const QImage thumb = pixmap.toImage().scaled(60, 45, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    QSet<QRgb> colors;
+    for (int y = 0; y < thumb.height(); ++y)
+        for (int x = 0; x < thumb.width(); ++x) {
+            const auto pixel = thumb.pixel(x, y);
+            if (qAlpha(pixel) > 32)
+                colors.insert(pixel);
+        }
+    return colors.size() >= 8 && pixmap.save(QDir(output).filePath(name + ".png"));
 }
 
 QJsonObject matchData(QTreeWidgetItem &item)
@@ -243,6 +262,11 @@ private slots:
         QVERIFY(window->windowTitle().contains("Hello Needle"));
         QCOMPARE(results->topLevelItemCount(), 0);
         QVERIFY(query->text().isEmpty());
+        QVERIFY(!window->windowIcon().pixmap(32, 32).isNull());
+        auto *options = control<QToolButton>("optionsButton");
+        QVERIFY(options);
+        QCOMPARE(options->arrowType(), Qt::RightArrow);
+        QVERIFY(!options->accessibleName().isEmpty());
         const auto locale = qEnvironmentVariable("HN_QA_LANGUAGE");
         QString caption = search->text();
         caption.remove('&');
@@ -256,16 +280,14 @@ private slots:
         evidence["searchCaption"] = caption;
         VERIFY_OK(guiqa::saveView(*window, "first-launch"));
         const QPixmap native = guiqa::hasExpectedPlatform() ? window->screen()->grabWindow(window->winId()) : QPixmap();
-        evidence["nativeWindowCapture"] = !native.isNull() &&
-            native.save(QDir(output).filePath("first-launch-native.png"));
+        evidence["nativeWindowCapture"] = saveNative(native, "first-launch-native");
         // Capture the actual non-client frame on an isolated native runner as
         // well. Full desktop capture is unnecessary for checking initial chrome.
         if (guiqa::hasExpectedPlatform() && qEnvironmentVariableIsSet("GITHUB_ACTIONS")) {
             const QPoint origin = frame.topLeft() - window->screen()->geometry().topLeft();
             const auto framed = window->screen()->grabWindow(0, origin.x(), origin.y(),
                                                              frame.width(), frame.height());
-            evidence["nativeFrameCapture"] = !framed.isNull() &&
-                framed.save(QDir(output).filePath("first-launch-frame.png"));
+            evidence["nativeFrameCapture"] = saveNative(framed, "first-launch-frame");
         }
         QVERIFY2(frame.width() <= available.width() + 4 && frame.height() <= available.height() + 4,
                  qPrintable(QString("First launch %1x%2 exceeds work area %3x%4")
@@ -289,6 +311,7 @@ private slots:
             QTest::keyClick(button, Qt::Key_Space);
         }
         QVERIFY(pattern->isVisible());
+        QCOMPARE(control<QToolButton>("optionsButton")->arrowType(), Qt::DownArrow);
         const auto available = window->screen()->availableGeometry();
         window->resize(std::min(760, available.width()-12), std::min(580, available.height()-48));
         QTest::qWait(35);
@@ -303,7 +326,30 @@ private slots:
         // Cocoa presents the native menu bar outside the window. The system
         // screenshot and menu action/dialog tests cover the native actions there.
         evidence["nativeMenuBar"] = window->menuBar()->isNativeMenuBar();
+#ifdef Q_OS_MACOS
+        if (window->menuBar()->isNativeMenuBar()) {
+            const auto titles = cocoaMenuTitles();
+            evidence["cocoaMenuTitles"] = QJsonArray::fromStringList(titles);
+            auto nativeTitle = [&](const char *name) {
+                QString title = control<QMenu>(name)->title();
+                return title.remove('&');
+            };
+            QVERIFY2(titles.contains(nativeTitle("searchMenu")) && titles.contains(nativeTitle("languageMenu")),
+                     qPrintable("Cocoa did not publish the translated menus: " + titles.join(", ")));
+            if (qEnvironmentVariableIsSet("GITHUB_ACTIONS") && qApp->applicationState() == Qt::ApplicationActive) {
+                auto *screen = window->screen();
+                const int barHeight = qBound(24, screen->availableGeometry().top() - screen->geometry().top(), 40);
+                const auto native = screen->grabWindow(0, 0, 0, qMin(600, screen->geometry().width()), barHeight);
+                evidence["cocoaMenuBarCapture"] = saveNative(native, "native-menu-bar");
+            }
+        }
+#endif
         if (!window->menuBar()->isNativeMenuBar()) {
+            QJsonObject menuInk;
+            const auto barInk = guiqa::inspectMenuInk(*window->menuBar(),
+                window->menuBar()->actionGeometry(fileMenu->menuAction()), menuInk);
+            evidence["renderedMenuBar"] = menuInk;
+            VERIFY_OK(barInk);
             fileMenu->popup(window->menuBar()->mapToGlobal(QPoint(2, window->menuBar()->height())));
             QVERIFY(until([&] { return fileMenu->isVisible(); }, 3000));
             for (QAction *a : fileMenu->actions()) {
@@ -314,6 +360,10 @@ private slots:
                              qPrintable("Clipped menu action: " + label));
                 }
             }
+            const auto popupInk = guiqa::inspectMenuInk(*fileMenu,
+                fileMenu->actionGeometry(control<QAction>("folderAction")), menuInk);
+            evidence["renderedMenuItem"] = menuInk;
+            VERIFY_OK(popupInk);
             VERIFY_OK(guiqa::saveView(*fileMenu, "file-menu"));
             QTest::keyClick(fileMenu, Qt::Key_Escape);
             QVERIFY(until([&] { return !fileMenu->isVisible(); }, 2000));
@@ -383,6 +433,7 @@ private slots:
 
     void markupModes()
     {
+        QVERIFY(!preview->openExternalLinks() && !preview->openLinks());
         auto *mode = control<QComboBox>("modeCombo");
         QVERIFY(submit("The Latest Batch"));
         for (const auto &name : {QString("page.html"), QString("readme.md")}) {
@@ -438,6 +489,12 @@ private slots:
         QVERIFY(until([&] { return prev->isEnabled() && label->text().contains('2'); }));
         QTest::mouseClick(next, Qt::LeftButton);
         QVERIFY(until([&] { return !next->isEnabled() && label->text().contains('3'); }));
+        auto *toggle = control<QAbstractButton>("pdfTextButton");
+        QVERIFY(toggle && toggle->isVisible());
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QVERIFY(until([&] { return preview->isVisible() && preview->textCursor().block().text().contains("Closing page"); }));
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QVERIFY(until([&] { return image->isVisible() && !image->pixmap().isNull() && !next->isEnabled(); }));
     }
 
     void optionsAndCancellation()
@@ -485,6 +542,30 @@ private slots:
         QVERIFY(submit("NeverPresentAfterCancel486"));
         QTest::qWait(120);
         QCOMPARE(results->topLevelItemCount(), 0);
+    }
+
+    void languageMenu()
+    {
+        auto *menu = control<QMenu>("languageMenu");
+        auto *en = control<QAction>("englishAction");
+        auto *es = control<QAction>("spanishAction");
+        QVERIFY(menu && en && es);
+        QCOMPARE(menu->actions().size(), 2);
+        QCOMPARE(en->text(), "English");
+        QCOMPARE(es->text(), QString::fromUtf8("Español"));
+        const bool beganInSpanish = es->isChecked();
+        es->trigger();
+        QCOMPARE(search->text(), "Buscar");
+        QCOMPARE(control<QComboBox>("modeCombo")->currentText(), "Documento");
+        QVERIFY(es->isChecked() && !en->isChecked());
+        QCOMPARE(QSettings().value("interface/language").toString(), "es");
+        en->trigger();
+        QCOMPARE(search->text(), "Search");
+        QCOMPARE(control<QComboBox>("modeCombo")->currentText(), "Document");
+        QCOMPARE(QSettings().value("interface/language").toString(), "en");
+        QVERIFY(en->isChecked() && !es->isChecked());
+        if (beganInSpanish)
+            es->trigger();
     }
 
     void helpAndCredits()

@@ -14,4 +14,3 @@ QString ui(const char *english);
 QString locationLabel(const QJsonObject &location, const QString &fallback);
 QString workerError(const QJsonObject &event);
 }
-

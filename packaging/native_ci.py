@@ -52,18 +52,35 @@ def files_under(directory):
 def system_packages():
     if SYSTEM == "Linux":
         return output(["dpkg-query", "-W", "-f=${binary:Package} ${Version}\\n",
-                       "qt6-base-dev", "qt6-qpa-plugins", "poppler-utils", "antiword"])
+                       "qt6-base-dev", "qt6-qpa-plugins", "qt6-translations-l10n", "poppler-utils", "antiword"])
     if SYSTEM == "FreeBSD":
-        return output(["pkg", "query", "%n %v", "qt6-base", "poppler-utils", "antiword"])
+        return output(["pkg", "query", "%n %v", "qt6-base", "qt6-translations", "poppler-utils", "antiword"])
     if SYSTEM == "Darwin":
-        return output(["brew", "list", "--versions", "qtbase", "poppler", "antiword"])
+        return output(["brew", "list", "--versions", "qtbase", "qttranslations", "poppler", "antiword"])
     return output(["pacman", "-Q", *["mingw-w64-ucrt-x86_64-" + name
-                                     for name in ["qt6-base", "poppler", "antiword", "gcc-libs"]]])
+                                     for name in ["qt6-base", "qt6-translations", "poppler", "antiword", "gcc-libs"]]])
+
+
+def converter_versions():
+    result = {}
+    for name, flag in (("pdftotext", "-v"), ("pdftoppm", "-v"), ("antiword", "-h")):
+        executable = shutil.which(name)
+        if not executable:
+            raise SystemExit(f"Missing converter: {name}")
+        # Antiword's -h includes the version and exits with its usage status.
+        banner = subprocess.run([executable, flag], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", timeout=15).stdout
+        version = next((line.strip() for line in banner.splitlines() if "version" in line.lower()), None)
+        if not version:
+            raise SystemExit(f"Could not read {name} version: {banner}")
+        result[name] = {"executable": executable, "version": version}
+    return result
 
 
 def os_description():
     if SYSTEM == "Windows":
-        return output(["powershell.exe", "-NoProfile", "-Command",
+        powershell = shutil.which("powershell.exe") or Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        return output([powershell, "-NoProfile", "-Command",
                        "(Get-CimInstance Win32_OperatingSystem).Caption"])
     if SYSTEM == "Darwin":
         return output(["sw_vers"])
@@ -77,15 +94,20 @@ def environment(archived, bindir):
     commands = {"Linux": ["ldd"], "FreeBSD": ["ldd"], "Darwin": ["otool", "-L"],
                 "Windows": ["objdump", "-p"]}
     libraries = {}
-    for name in ("helloneedle", "helloneedle-worker"):
-        linked = output(commands[SYSTEM] + [bindir / (name + EXE)])
+    binaries = [bindir / (name + EXE) for name in ("helloneedle", "helloneedle-worker")]
+    if SYSTEM == "Windows":
+        binaries.append(bindir.parent / "Hello Needle.exe")
+    for binary in binaries:
+        linked = output(commands[SYSTEM] + [binary])
         if SYSTEM == "Windows":
             linked = "\n".join(line.strip() for line in linked.splitlines() if "DLL Name:" in line)
-        libraries[name] = linked
+            if binary.name == "Hello Needle.exe" and any(name in linked.lower() for name in ("qt6", "libgcc", "libstdc++", "libwinpthread")):
+                raise SystemExit("The Windows launcher must start using Windows system libraries alone.")
+        libraries[binary.name] = linked
     return {
         "commit": archived, "platform": platform.platform(), "operating_system": os_description(),
         "machine": platform.machine(), "managed_packages": system_packages().splitlines(),
-        "runtime_linkage": libraries,
+        "runtime_linkage": libraries, "converters": converter_versions(),
         "corresponding_source": f"helloneedle-source-{archived}.tar.gz",
     }
 
@@ -108,7 +130,7 @@ def debian(stage, bindir, dist, version):
     (control / "control").write_text(
         f"Package: helloneedle\nVersion: {version}\nArchitecture: {arch}\nSection: utils\nPriority: optional\n"
         f"Maintainer: Hello Needle <{MAINTAINER}>\nHomepage: {PROJECT_URL}\n"
-        f"Depends: {depends}, qt6-qpa-plugins, poppler-utils, antiword\n"
+        f"Depends: {depends}, qt6-qpa-plugins, qt6-translations-l10n, poppler-utils, antiword\n"
         "Description: Search and preview local documents with Hello Needle\n",
         encoding="utf-8")
     archive = dist / f"helloneedle_{version}_{arch}.deb"
@@ -118,7 +140,7 @@ def debian(stage, bindir, dist, version):
 
 def freebsd(stage, dist, work, version):
     deps = {}
-    for name in ("qt6-base", "poppler-utils", "antiword"):
+    for name in ("qt6-base", "qt6-translations", "poppler-utils", "antiword"):
         origin, installed = output(["pkg", "query", "%o %v", name]).split()
         deps[name] = {"origin": origin, "version": installed}
     package_files = {}
@@ -170,8 +192,9 @@ def build(args):
         run(["codesign", "--force", "--sign", "-", bindir / "helloneedle-worker"])
         run(["codesign", "--force", "--sign", "-", bundle])
         run(["codesign", "--verify", "--deep", "--strict", bundle])
+        shutil.copy2(ROOT / "packaging/MACOS.txt", stage / "MACOS.txt")
         archive = dist / f"HelloNeedle-{version}-macOS-{platform.machine()}.zip"
-        run(["ditto", "-c", "-k", "--keepParent", bundle, archive])
+        run(["ditto", "-c", "-k", stage, archive])
     else:
         archive = dist / f"HelloNeedle-{version}-Windows-x64-UCRT.zip"
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as package:
@@ -193,6 +216,8 @@ def verify(args):
     evidence.mkdir(parents=True, exist_ok=True)
     build_env = json.loads((docs / "BUILD-ENVIRONMENT.json").read_text(encoding="utf-8"))
     current = output(["git", "rev-parse", "HEAD"], cwd=ROOT)
+    if SYSTEM == "Windows":
+        app = args.prefix.resolve() / "Hello Needle.exe"
     if build_env["commit"] != current:
         raise SystemExit(f"Installed build {build_env['commit']} differs from test checkout {current}.")
     for path in [ROOT / "LICENSE", ROOT / "NOTICE.md", *files_under(ROOT / "LICENSES")]:
@@ -202,7 +227,7 @@ def verify(args):
         raise SystemExit("Missing Rust inventory.")
     (evidence / "host.json").write_text(json.dumps(
         {"commit": current, "host": os_description(), "machine": platform.machine(),
-         "platform": platform.platform(), "packages": system_packages().splitlines()},
+         "platform": platform.platform(), "packages": system_packages().splitlines(), "converters": converter_versions()},
         indent=2) + "\n", encoding="utf-8")
     checks = {
         "installed-app": [app, "--smoke-test"],
@@ -214,9 +239,21 @@ def verify(args):
     with tempfile.TemporaryDirectory(prefix="Hello Needle installed test ") as temp:
         for name, command in checks.items():
             logfile = evidence / (name + ".log")
+            env = os.environ.copy()
+            if name == "installed-app" and SYSTEM == "Windows":
+                # A double-click from Explorer has no MSYS2 shell or developer PATH.
+                prefix = Path(shutil.which("pdftotext")).parent.parent
+                default = Path(os.environ["SystemDrive"] + "/msys64/ucrt64")
+                env.pop("HELLONEEDLE_UCRT64", None)
+                if prefix != default:
+                    env["HELLONEEDLE_UCRT64"] = str(prefix)
+                env["PATH"] = os.pathsep.join([str(Path(os.environ["SystemRoot"]) / "System32"), os.environ["SystemRoot"]])
+                env.pop("QT_PLUGIN_PATH", None)
+            elif name == "installed-app" and SYSTEM == "Darwin":
+                env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
             try:
                 with logfile.open("w", encoding="utf-8") as log:
-                    run(command, stdout=log, stderr=subprocess.STDOUT, cwd=temp, timeout=1200)
+                    run(command, stdout=log, stderr=subprocess.STDOUT, cwd=temp, timeout=1200, env=env)
             except (subprocess.SubprocessError, OSError) as exc:
                 failures.append(name)
                 print(f"{name}: {exc}", file=sys.stderr)

@@ -36,19 +36,19 @@ The desktop executable is `helloneedle`. It starts the adjacent `helloneedle-wor
 | --- | --- |
 | FreeBSD | Install the `.pkg` with `pkg add ./<package>.pkg` on a compatible FreeBSD release. Qt 6, Poppler utilities, and antiword come from FreeBSD packages. Launch **Hello Needle** from the desktop or run `helloneedle`. |
 | Linux | On the matching Ubuntu release, install the downloaded `.deb` with `sudo apt install ./<package>.deb`. A graphical desktop entry and the `helloneedle` command are installed. Other distributions can build from source. |
-| Windows | Use the MSYS2 **UCRT64** build. Install the runtime packages listed below, extract the Windows archive, and launch the included application with the UCRT64 runtime on its search path. |
-| macOS | Install the matching Homebrew runtime packages below, extract **Hello Needle.app**, and open it in Finder. The app uses the Homebrew installation for its architecture. |
+| Windows | Use the MSYS2 **UCRT64** build. Install the MSYS2 runtime packages, extract the archive, and double-click **Hello Needle.exe** at its top level. [Windows runtime instructions](packaging/WINDOWS.txt) |
+| macOS | Install the matching Homebrew runtime packages below, extract **Hello Needle.app**, and open it in Finder. This Apple Silicon build uses Homebrew and carries an ad hoc signature. [macOS runtime instructions](packaging/MACOS.txt) |
 
 ### Build from source
 
-The desktop build requires a C++17 compiler, Qt 6 Widgets, CMake 3.21 or newer, Rust/Cargo 1.85 or newer, Python 3.9 or newer, and a build tool such as Ninja. The native GUI audit also uses Qt Test. PDF extraction and display require `pdftotext` and `pdftoppm`. The legacy DOC decoder needs antiword and its character maps.
+The desktop build requires a C++17 compiler, Qt 6.4 or newer with Qt Widgets, CMake 3.21 or newer, Rust/Cargo 1.85 or newer, Python 3.9 or newer, and a build tool such as Ninja. The native GUI audit also uses Qt Test. PDF extraction and display require `pdftotext` and `pdftoppm`. The legacy DOC decoder needs antiword and its character maps.
 
 | Build host | Example dependencies |
 | --- | --- |
-| FreeBSD | `pkg install git cmake ninja rust python3 qt6-base poppler-utils antiword` |
-| Ubuntu | `sudo apt install git build-essential cmake ninja-build python3 qt6-base-dev qt6-qpa-plugins poppler-utils antiword`, plus current stable Rust/Cargo |
-| Windows, MSYS2 UCRT64 shell | `pacman -S --needed git mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python,qt6-base,poppler,antiword}` |
-| macOS | Xcode Command Line Tools and `brew install cmake ninja rust python qtbase poppler antiword` |
+| FreeBSD | `pkg install git cmake ninja rust python3 qt6-base qt6-translations poppler-utils antiword` |
+| Ubuntu | `sudo apt install git build-essential cmake ninja-build python3 qt6-base-dev qt6-qpa-plugins qt6-translations-l10n poppler-utils antiword`, plus current stable Rust/Cargo |
+| Windows, MSYS2 UCRT64 shell | `pacman -S --needed git mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python,qt6-base,qt6-translations,poppler,antiword}` |
+| macOS | Xcode Command Line Tools and `brew install cmake ninja rust python qtbase qttranslations poppler antiword` |
 
 From a source checkout or the unpacked corresponding source archive, run the following commands. Qt and the converters must be discoverable in the selected platform environment.
 
