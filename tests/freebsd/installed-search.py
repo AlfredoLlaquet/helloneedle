@@ -172,6 +172,10 @@ def check_window(process, language):
         toggle_nautilus(2)
         wait_for("removal of the Nautilus extension", process, lambda: not extension.exists())
         print("Preferences installed and removed the Nautilus extension under XDG_DATA_HOME.")
+        press("Escape")
+        wait_for("the Preferences dialog to close", process,
+                 lambda: not any(node.get_name() == "Nautilus" for node in walk(app)))
+        named_control(button_name, "Component")
     except Exception:
         if process.poll() is None:
             print("Accessible window content:", file=sys.stderr)
