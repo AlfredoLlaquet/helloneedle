@@ -12,8 +12,10 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEnterEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -29,12 +31,14 @@
 #include <QSettings>
 #include <QSet>
 #include <QStyle>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QUrl>
 
 #include <functional>
 #include <memory>
@@ -104,6 +108,24 @@ QString dialogContent(QDialog &dialog)
 }
 }
 
+class BrowserCapture final : public QObject {
+    Q_OBJECT
+public:
+    BrowserCapture()
+    {
+        for (const auto *scheme : {"https", "http"})
+            QDesktopServices::setUrlHandler(scheme, this, "record");
+    }
+    ~BrowserCapture() override
+    {
+        for (const auto *scheme : {"https", "http"})
+            QDesktopServices::unsetUrlHandler(scheme);
+    }
+    QList<QUrl> opened;
+public slots:
+    void record(const QUrl &url) { opened.append(url); }
+};
+
 #define VERIFY_OK(expression) do { const QString problem = (expression); \
     QVERIFY2(problem.isEmpty(), qPrintable(problem)); } while (false)
 
@@ -122,9 +144,9 @@ class GuiTests final : public QObject {
         return window->findChild<T *>(name);
     }
 
-    bool submit(const QString &text, bool keyboard = false)
+    bool submit(const QString &text, bool keyboard = false, const QString &directory = folder)
     {
-        control<QLineEdit>("folderEdit")->setText(folder);
+        control<QLineEdit>("folderEdit")->setText(directory);
         query->setText(text);
         if (!search->isEnabled())
             return false;
@@ -269,7 +291,10 @@ private slots:
         VERIFY_OK(iconCheck);
         auto *options = control<QToolButton>("optionsButton");
         QVERIFY(options);
-        QCOMPARE(options->arrowType(), Qt::RightArrow);
+        QVERIFY(options->isCheckable() && !options->isChecked());
+        QJsonObject buttonIcons;
+        VERIFY_OK(guiqa::inspectButtonIcons(*window, buttonIcons));
+        evidence["buttonIcons"] = buttonIcons;
         QVERIFY(!options->accessibleName().isEmpty());
         const auto locale = qEnvironmentVariable("HN_QA_LANGUAGE");
         QString caption = search->text();
@@ -318,7 +343,7 @@ private slots:
             QTest::keyClick(button, Qt::Key_Space);
         }
         QVERIFY(pattern->isVisible());
-        QCOMPARE(control<QToolButton>("optionsButton")->arrowType(), Qt::DownArrow);
+        QVERIFY(button->isChecked() && !button->icon().isNull());
         const auto available = window->screen()->availableGeometry();
         window->resize(std::min(760, available.width()-12), std::min(580, available.height()-48));
         QTest::qWait(35);
@@ -421,12 +446,109 @@ private slots:
         const QTextCursor selected = selectedText("Needle");
         QVERIFY(selected.block().text().contains(QString::fromUtf8("🧵 Needle then Needle, café.")));
         QCOMPARE(selected.selectionStart() - selected.block().position(), selected.block().text().lastIndexOf("Needle"));
+        QCOMPARE(control<QLabel>("previewTitle")->text(), hn::ui("Line %1").arg(3) + " - notes.txt");
         QVERIFY(control<QAbstractButton>("openOriginalButton")->isEnabled());
         VERIFY_OK(guiqa::saveView(*window, "search-results"));
         QVERIFY(submit("NeverPresentInFixture0204"));
         QCOMPARE(results->topLevelItemCount(), 0);
         QVERIFY(submit("Needle"));
         QCOMPARE(hits("notes.txt").size(), 2);
+    }
+
+    void statusBarLink()
+    {
+        auto *link = control<QAbstractButton>("crumbsLink");
+        QVERIFY(link && link->isVisible());
+        const bool spanish = hn::currentLanguage() == "es";
+        QCOMPARE(link->text(), spanish ? "Lee Crumbs de Alfredo Llaquet-Alsina en TheCrumbs.org"
+                                      : "Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org");
+        QCOMPARE(link->toolTip(), spanish ? "Abrir TheCrumbs.org en tu navegador"
+                                         : "Open TheCrumbs.org in your browser");
+        QEvent leave(QEvent::Leave);
+        QCoreApplication::sendEvent(link, &leave);
+        QVERIFY(!link->font().underline() && !link->font().bold());
+        QVERIFY2(link->heightForWidth(link->sizeHint().width()) <= link->fontMetrics().height() + 6,
+                 "The domain wraps onto another line even at the link's full preferred width");
+
+        BrowserCapture browser;
+        const QPoint center = link->rect().center();
+        const int halfText = link->fontMetrics().horizontalAdvance(link->text()) / 2;
+        for (const int x : {center.x() - halfText + 2, center.x(), center.x() + halfText - 2}) {
+            const QPoint point(x, center.y());
+            QVERIFY(link->rect().contains(point));
+            QEnterEvent enter(point, link->mapTo(window.get(), point), link->mapToGlobal(point));
+            QCoreApplication::sendEvent(link, &enter);
+            QVERIFY(link->font().underline());
+            QTest::mouseClick(link, Qt::LeftButton, Qt::NoModifier, point);
+            QCoreApplication::sendEvent(link, &leave);
+            QVERIFY(!link->font().underline());
+        }
+        QVERIFY(link->focusPolicy() & Qt::TabFocus);
+        link->setFocus(Qt::TabFocusReason);
+        QTest::keyClick(link, Qt::Key_Space);
+        QCOMPARE(browser.opened.size(), 4);
+        for (const QUrl &url : browser.opened)
+            QCOMPARE(url.adjusted(QUrl::StripTrailingSlash), QUrl("https://www.thecrumbs.org"));
+    }
+
+    void scannedDocumentsAndErrors()
+    {
+        QTemporaryDir docs;
+        QVERIFY(docs.isValid());
+        const QString title = "Witness statements in the appeal against gravity and supplementary exhibits from the hearing.docx";
+        QVERIFY(QFile::copy(QDir(folder).filePath("letter.docx"), docs.filePath(title)));
+        QFile quiet(docs.filePath("01-quiet.txt"));
+        QVERIFY(quiet.open(QIODevice::WriteOnly));
+        QCOMPARE(quiet.write("No hits here."), 13);
+        quiet.close();
+        QFile unreadable(docs.filePath("02-invalid.txt"));
+        QVERIFY(unreadable.open(QIODevice::WriteOnly));
+        QCOMPARE(unreadable.write(QByteArray(8, '\0')), 8);
+        unreadable.close();
+
+        auto *status = control<QLabel>("statusLabel");
+        auto *errors = control<QLabel>("errorCountLabel");
+        auto *details = control<QAbstractButton>("issuesButton");
+        QVERIFY(status && errors && details);
+        QVERIFY(!errors->isVisible() && !details->isVisible());
+        const bool spanish = hn::currentLanguage() == "es";
+        const QString first = spanish ? "1 documento examinado" : "1 document scanned";
+        bool countedBeforeFirstHit = false;
+        QObject observation;
+        connect(results->model(), &QAbstractItemModel::rowsInserted, &observation, [&] {
+            if (cancel->isEnabled() && status->text().contains(first))
+                countedBeforeFirstHit = true;
+        });
+        QVERIFY(submit("Needle", false, docs.path()));
+        QVERIFY(countedBeforeFirstHit);
+        const QString scanned = spanish ? "2 documentos examinados" : "2 documents scanned";
+        QVERIFY2(status->text().contains(scanned), qPrintable(status->text()));
+        QVERIFY(status->text().contains(spanish ? "1 coincidencia" : "1 match"));
+        QCOMPARE(errors->text(), "1 error");
+        QVERIFY(errors->isVisible() && details->isVisible());
+        VERIFY_OK(guiqa::inspectLayout(*window));
+
+        window->resize(qMin(514, window->width()), window->height());
+        QVERIFY(selectHit(title));
+        QVERIFY(until([&] { return !selectedText("Needle").isNull(); }));
+        auto *heading = control<QLabel>("previewTitle");
+        auto *open = control<QAbstractButton>("openOriginalButton");
+        QVERIFY(heading && open && open->isEnabled());
+        QCOMPARE(heading->text(), (spanish ? QString("Párrafo 2 - ") : QString("Paragraph 2 - ")) + title);
+        QVERIFY(heading->wordWrap() && heading->alignment().testFlag(Qt::AlignLeft));
+        QVERIFY(heading->height() >= 2 * heading->fontMetrics().height() - 3);
+        const auto headingStart = heading->mapTo(window.get(), QPoint());
+        const auto buttonStart = open->mapTo(window.get(), QPoint());
+        QVERIFY(std::abs(headingStart.x() - buttonStart.x()) <= 8);
+        QVERIFY(buttonStart.y() >= headingStart.y() + heading->height() - 3);
+        VERIFY_OK(guiqa::inspectLayout(*window));
+        VERIFY_OK(guiqa::saveView(*window, "progress-and-errors-narrow"));
+
+        QVERIFY(unreadable.remove());
+        QVERIFY(submit("NoMatchAnywhere", false, docs.path()));
+        QVERIFY(status->text().contains(scanned));
+        QVERIFY(status->text().contains(spanish ? "0 coincidencias" : "0 matches"));
+        QVERIFY(!errors->isVisible() && !details->isVisible());
     }
 
     void wordAndOfficePreviews()
@@ -453,6 +575,7 @@ private slots:
             const auto position = matchData(*results->currentItem())["location"].toObject();
             QCOMPARE(position["cell"].toString(), "C7");
             QCOMPARE(position["sheet"].toString(), "Quarterly");
+            QCOMPARE(control<QLabel>("previewTitle")->text(), QStringLiteral("Quarterly · C7 - ") + name);
         }
         for (const auto &name : {QString("talk.pptx"), QString("talk.odp")}) {
             QVERIFY2(selectHit(name), qPrintable(name));
@@ -504,6 +627,7 @@ private slots:
             return image->isVisible() && !image->pixmap().isNull() && label->text().contains('2');
         };
         QVERIFY(until(ready));
+        QCOMPARE(control<QLabel>("previewTitle")->text(), hn::ui("Page %1").arg(2) + " - report.pdf");
         const auto first = image->pixmap().toImage();
         QVERIFY(selectHit("report.pdf", 1));
         QVERIFY(until([&] { return ready() && image->pixmap().toImage() != first; }));

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "previewpane.h"
+#include "buttonicons.h"
 #include "language.h"
 #include "pdfpane.h"
 #include <QDesktopServices>
@@ -8,14 +9,68 @@
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
+#include <QPainter>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTextDocumentFragment>
+#include <QTextLayout>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QtMath>
 
 namespace {
+// Keep the full title available to accessibility and the tooltip. Long file names
+// can have no spaces at all, so ordinary word wrapping can lose their extension.
+class PreviewTitle final : public QLabel {
+public:
+    using QLabel::QLabel;
+
+    int heightForWidth(int width) const override
+    {
+        QTextLayout layout(text(), font(), this);
+        wrap(layout, width);
+        return qMax(fontMetrics().height(), qCeil(layout.boundingRect().height()));
+    }
+    QSize minimumSizeHint() const override { return {0, fontMetrics().height()}; }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QTextLayout layout(text(), font(), this);
+        wrap(layout, width());
+        QPainter painter(this);
+        painter.setPen(palette().color(foregroundRole()));
+        for (int n = 0; n < layout.lineCount(); ++n) {
+            const auto line = layout.lineAt(n);
+            if (n == 1 && line.textStart() + line.textLength() < text().size()) {
+                const auto tail = fontMetrics().elidedText(text().mid(line.textStart()), Qt::ElideMiddle, width());
+                painter.drawText(QPointF(0, line.y() + line.ascent()), tail);
+            } else {
+                line.draw(&painter, {});
+            }
+        }
+    }
+
+private:
+    static void wrap(QTextLayout &layout, int width)
+    {
+        QTextOption options;
+        options.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+        layout.setTextOption(options);
+        layout.beginLayout();
+        qreal y = 0;
+        for (int n = 0; n < 2; ++n) {
+            auto line = layout.createLine();
+            if (!line.isValid()) break;
+            line.setLineWidth(qMax(1, width));
+            line.setPosition({0, y});
+            y += line.height();
+        }
+        layout.endLayout();
+    }
+};
+
 class LocalPreview final : public QTextBrowser {
 public:
     using QTextBrowser::QTextBrowser;
@@ -29,27 +84,26 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this)
     setObjectName("previewPane");
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    auto *bar = new QHBoxLayout;
-    name = new QLabel(this);
+    name = new PreviewTitle(this);
     name->setObjectName("previewTitle");
     name->setTextFormat(Qt::PlainText);
     name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    name->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    name->setWordWrap(true);
     QFont heading = name->font();
     heading.setBold(true);
     name->setFont(heading);
-    bar->addWidget(name, 1);
+    layout->addWidget(name);
+    auto *bar = new QHBoxLayout;
+    open = new QPushButton(this);
+    open->setObjectName("openOriginalButton");
+    setButtonIcon(open, ButtonIcon::OpenOriginal);
+    bar->addWidget(open);
     toggle = new QPushButton(this);
     toggle->setObjectName("pdfTextButton");
     bar->addWidget(toggle);
-    open = new QPushButton(this);
-    open->setObjectName("openOriginalButton");
-    bar->addWidget(open);
+    bar->addStretch();
     layout->addLayout(bar);
-    place = new QLabel(this);
-    place->setObjectName("previewLocation");
-    place->setTextFormat(Qt::PlainText);
-    place->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    layout->addWidget(place);
     stack = new QStackedWidget(this);
     text = new LocalPreview(stack);
     text->setObjectName("previewText");
@@ -89,9 +143,6 @@ void PreviewPane::clear()
     match = {};
     open->setEnabled(false);
     toggle->hide();
-    place->clear();
-    place->hide();
-    name->clear();
     text->clear();
     text->setExtraSelections({});
     stack->setCurrentWidget(text);
@@ -103,11 +154,23 @@ void PreviewPane::retranslate()
     text->setAccessibleName(ui("Document preview"));
     text->setPlaceholderText(ui("Select a result to read the passage."));
     open->setText(ui("Open original"));
-    if (match.isEmpty()) name->setText(ui("Preview"));
-    if (!match.isEmpty()) place->setText(locationLabel(match.value("location").toObject(), match.value("label").toString()));
+    updateTitle();
     open->setToolTip(ui("Open this file in its usual application."));
     pdf->retranslate();
     toggle->setText(stack->currentWidget() == pdf ? ui("Show text") : ui("Show page"));
+}
+
+void PreviewPane::updateTitle()
+{
+    const QString path = match.value("path").toString();
+    if (match.isEmpty()) {
+        name->setText(ui("Preview"));
+        name->setToolTip({});
+        return;
+    }
+    const auto location = locationLabel(match.value("location").toObject(), match.value("label").toString());
+    name->setText(location + QStringLiteral(" - ") + QFileInfo(path).fileName());
+    name->setToolTip(path);
 }
 
 void PreviewPane::openOriginal()
@@ -139,10 +202,7 @@ void PreviewPane::showMatch(const QJsonObject &event)
 {
     clear();
     match = event;
-    name->setText(QFileInfo(match.value("path").toString()).fileName());
-    name->setToolTip(match.value("path").toString());
-    place->setText(locationLabel(match.value("location").toObject(), match.value("label").toString()));
-    place->setVisible(!place->text().isEmpty());
+    updateTitle();
     open->setEnabled(true);
     text->setPlaceholderText(ui("Loading preview…"));
     load(match.value("location").toObject(), true);
@@ -152,7 +212,7 @@ void PreviewPane::load(const QJsonObject &location, bool first)
 {
     received = false;
     QJsonObject request;
-    for (const auto *key : {"path", "pathBytes", "pathEncoding", "mode", "revision"})
+    for (const auto *key : {"path", "pathBytes", "pathEncoding", "mode", "revision", "blockStart"})
         if (match.contains(key)) request.insert(key, match.value(key));
     request.insert("location", location);
     worker.start("preview", request, [this, first](const QJsonObject &data) {
@@ -211,8 +271,12 @@ void PreviewPane::present(const QJsonObject &data, bool first)
     }
     textPage = selectedSpot.value("page").toInt();
     if (selectedStart >= 0) {
-        const int begin = qBound(0, match.value("blockStart").toInt(match.value("start").toInt()), selectedSize);
-        const int length = qBound(0, match.value("blockLength").toInt(match.value("length").toInt()), selectedSize - begin);
+        const qint64 offset = selectedSpot.value("textOffset").toInteger();
+        const qint64 start = match.value("blockStart").toInteger(match.value("start").toInteger());
+        const qint64 matchLength = match.value("blockLength").toInteger(match.value("length").toInteger());
+        const int begin = int(qBound(qint64(0), start - offset, qint64(selectedSize)));
+        const int end = int(qBound(qint64(begin), start + matchLength - offset, qint64(selectedSize)));
+        const int length = end - begin;
         QTextCursor target(text->document());
         target.setPosition(selectedStart + (match.value("kind") == "filename" ? 0 : begin));
         text->setTextCursor(target);

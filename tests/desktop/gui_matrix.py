@@ -20,8 +20,9 @@ from document_fixtures import write_documents
 FULL = [
     "firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "wordAndOfficePreviews",
     "markupModes", "pdfNavigation", "optionsAndCancellation", "languageMenu", "helpAndCredits",
+    "statusBarLink", "scannedDocumentsAndErrors",
 ]
-SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat"]
+SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "statusBarLink", "scannedDocumentsAndErrors"]
 
 
 def native_plugin():

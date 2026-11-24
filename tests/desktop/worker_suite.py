@@ -42,7 +42,8 @@ def utf16_slice(string, start, length):
 
 
 def preview(executable, hit, mode="document"):
-    request = {"path": hit["path"], "mode": mode, "location": hit["location"]}
+    request = {"path": hit["path"], "mode": mode, "location": hit["location"],
+               "blockStart": hit["blockStart"]}
     if "pathBytes" in hit:
         request["pathBytes"] = hit["pathBytes"]
     events = exchange(executable, "preview", request)
@@ -54,7 +55,8 @@ def validate_occurrence(executable, hit, expected):
     view = preview(executable, hit)
     selected = view["blocks"][view["index"]]
     assert selected["location"]["index"] == hit["location"]["index"], (hit, selected)
-    actual = utf16_slice(selected["text"], hit["blockStart"], hit["blockLength"])
+    offset = selected["location"].get("textOffset", 0)
+    actual = utf16_slice(selected["text"], hit["blockStart"] - offset, hit["blockLength"])
     assert actual == expected, (hit, selected)
     return view
 
@@ -142,6 +144,54 @@ def verify_modes(worker, root):
     print("Document and Source searches, hidden script text, and inline formatted passages passed")
 
 
+def verify_large_html(worker, root):
+    root.mkdir()
+    # An actual image export above the old raw-file limit, with alt after the
+    # payload and searchable formatted text and a caption following the image.
+    image = root / "exhibit.htm"
+    with image.open("wb") as output:
+        output.write(b'<figure><img src="data:image/png;base64,')
+        megabyte = b"A" * (1024 * 1024)
+        for _ in range(65):
+            output.write(megabyte)
+        output.write(b'" alt="Needle portrait"><figcaption>Needle <b>caption</b></figcaption></figure>')
+    hits, _ = search(worker, root, "Needle")
+    assert len(hits) == 2, hits
+    for hit in hits:
+        validate_occurrence(worker, hit, "Needle")
+    caption, _ = search(worker, root, "Needle caption")
+    assert len(caption) == 1
+    _, errors = search(worker, root, "base64", mode="source", allow_errors=True)
+    assert len(errors) == 1 and errors[0]["code"] in {"limit", "too_large"}, errors
+
+    # A long unbroken paragraph also needs a bounded preview near the match,
+    # including the original UTF-16 coordinate after a non-BMP character.
+    long_file = root / "paragraph.xhtml"
+    with long_file.open("wb") as output:
+        output.write(b"<p>")
+        for _ in range(9):
+            output.write(megabyte)
+        output.write("😀Last sheep</p>".encode())
+    hits, _ = search(worker, root, "Last sheep", pathPattern="*.xhtml")
+    assert len(hits) == 1
+    view = validate_occurrence(worker, hits[0], "Last sheep")
+    assert len(view["blocks"][view["index"]]["text"]) < 25_000
+    print("Large image-heavy HTML and large text-only HTML searched and previewed")
+
+
+def verify_scan_counts(worker, root):
+    root.mkdir()
+    (root / "a.txt").write_text("No match here.", encoding="utf-8")
+    (root / "b.txt").write_text("Needle and Needle", encoding="utf-8")
+    (root / "c.docx").write_bytes(b"invalid package")
+    (root / "d.bin").write_bytes(b"\x00\x01")
+    events = exchange(worker, "search", {"folder": str(root), "query": "Needle"}, allow_errors=True)
+    progress = [e["documentsScanned"] for e in events if e["type"] == "progress"]
+    assert progress and progress[0] == 1 and progress == sorted(set(progress)), events
+    assert events[-1] == {"type": "done", "count": 2, "files": 4, "documentsScanned": 2,
+                          "errors": 1, "truncated": False}, events
+
+
 def verify_options_and_recovery(worker, root):
     root.mkdir()
     (root / "ordinary.txt").write_text("needle\nNeedle\nend", encoding="utf-8")
@@ -205,6 +255,8 @@ def main():
         if args.require_doc:
             verify_small_word(worker, root / "small binary Word")
         verify_modes(worker, root / "markup")
+        verify_scan_counts(worker, root / "scan counts")
+        verify_large_html(worker, root / "large markup")
         verify_options_and_recovery(worker, root / "search controls")
         verify_native_names(worker, root / "native names")
 

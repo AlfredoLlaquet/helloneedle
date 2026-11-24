@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "mainwindow.h"
+#include "buttonicons.h"
 #include "credits.h"
 #include "language.h"
 #include "previewpane.h"
+#include "searchstatus.h"
 #include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
@@ -63,6 +65,7 @@ void MainWindow::buildControls()
     folderLabel->setBuddy(folderEdit);
     browse = new QPushButton(body);
     browse->setObjectName("browseButton");
+    setButtonIcon(browse, ButtonIcon::Browse);
     fields->addWidget(folderLabel, 0, 0);
     fields->addWidget(folderEdit, 0, 1, 1, 2);
     fields->addWidget(browse, 0, 3);
@@ -72,9 +75,11 @@ void MainWindow::buildControls()
     queryLabel->setBuddy(queryEdit);
     search = new QPushButton(body);
     search->setObjectName("searchButton");
+    setButtonIcon(search, ButtonIcon::Search);
     search->setDefault(true);
     cancel = new QPushButton(body);
     cancel->setObjectName("cancelButton");
+    setButtonIcon(cancel, ButtonIcon::Cancel);
     fields->addWidget(queryLabel, 1, 0);
     fields->addWidget(queryEdit, 1, 1);
     fields->addWidget(search, 1, 2);
@@ -84,11 +89,11 @@ void MainWindow::buildControls()
     options = new QToolButton(body);
     options->setObjectName("optionsButton");
     options->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    options->setArrowType(Qt::RightArrow);
+    setButtonIcon(options, ButtonIcon::Options);
     options->setCheckable(true);
     modes->addWidget(options);
-    modes->addStretch();
     modeLabel = new QLabel(body);
+    modeLabel->setObjectName("modeLabel");
     mode = new QComboBox(body);
     mode->setObjectName("modeCombo");
     modeLabel->setBuddy(mode);
@@ -96,6 +101,7 @@ void MainWindow::buildControls()
     mode->addItem("", "source");
     modes->addWidget(modeLabel);
     modes->addWidget(mode);
+    modes->addStretch();
     layout->addLayout(modes);
     optionsPane = new QWidget(body);
     optionsPane->setObjectName("optionsPane");
@@ -141,33 +147,22 @@ void MainWindow::buildControls()
     results->setMinimumSize(110, 50);
     leftLayout->addWidget(results);
     preview = new PreviewPane(splitter);
-    if (const auto *openButton = preview->findChild<QPushButton *>("openOriginalButton"))
-        resultsLabel->setMinimumHeight(openButton->sizeHint().height());
     splitter->addWidget(left);
     splitter->addWidget(preview);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 3);
     layout->addWidget(splitter, 1);
     setCentralWidget(body);
-    status = new QLabel(this);
-    status->setObjectName("statusLabel");
-    status->setTextFormat(Qt::PlainText);
-    status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    statusBar()->addWidget(status, 1);
-    issues = new QPushButton(this);
-    issues->setObjectName("issuesButton");
-    statusBar()->addPermanentWidget(issues);
-    connect(issues, &QPushButton::clicked, this, &MainWindow::showErrors);
+    status = new SearchStatus(statusBar());
+    statusBar()->addPermanentWidget(status, 1);
+    connect(status->detailsButton(), &QPushButton::clicked, this, &MainWindow::showErrors);
     connect(browse, &QPushButton::clicked, this, &MainWindow::chooseFolder);
     connect(search, &QPushButton::clicked, this, &MainWindow::startSearch);
     connect(cancel, &QPushButton::clicked, this, &MainWindow::cancelSearch);
     connect(queryEdit, &QLineEdit::returnPressed, this, &MainWindow::startSearch);
     connect(folderEdit, &QLineEdit::returnPressed, this, [this]{ queryEdit->setFocus(); });
     connect(patternEdit, &QLineEdit::returnPressed, this, &MainWindow::startSearch);
-    connect(options, &QToolButton::toggled, this, [this](bool shown) {
-        optionsPane->setVisible(shown);
-        options->setArrowType(shown ? Qt::DownArrow : Qt::RightArrow);
-    });
+    connect(options, &QToolButton::toggled, optionsPane, &QWidget::setVisible);
     connect(results, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item){ displayMatch(item); });
 }
 
@@ -311,7 +306,7 @@ void MainWindow::retranslate()
     patternEdit->setPlaceholderText(ui("For example, *.md"));
     resultsLabel->setText(ui("Results"));
     results->setAccessibleName(ui("Search results"));
-    issues->setText(ui("Details…"));
+    status->retranslate();
     fileMenu->setTitle(ui("&File"));
     searchMenu->setTitle(ui("&Search"));
     languageMenu->setTitle(ui("&Language"));
@@ -345,6 +340,7 @@ void MainWindow::startSearch()
     problems.clear();
     failure.clear();
     count = 0;
+    documentsScanned = 0;
     errors = 0;
     truncated = false;
     if (queryEdit->text().isEmpty() || folderEdit->text().isEmpty()) {
@@ -362,6 +358,8 @@ void MainWindow::startSearch()
         {"pathPattern", patternEdit->text()}, {"mode", mode->currentData().toString()}};
     worker.start("search", request, [this](const QJsonObject &data) {
         const auto type = data.value("type").toString();
+        if (type == "progress" || type == "done")
+            documentsScanned = data.value("documentsScanned").toInteger(documentsScanned);
         if (type == "match") addMatch(data);
         else if (type == "error") {
             ++errors;
@@ -438,24 +436,21 @@ void MainWindow::refreshStatus()
     cancel->setEnabled(active);
     cancelAction->setEnabled(active);
     search->setEnabled(!active);
-    issues->setVisible(errors > 0);
+    const QString scanned = documentsScanned == 1 ? ui("1 document scanned")
+                                                 : ui("%1 documents scanned").arg(documentsScanned);
+    const QString matches = count == 1 ? ui("1 match") : ui("%1 matches").arg(count);
+    const QString counts = scanned + QStringLiteral(" · ") + matches;
     QString message;
     switch (state) {
     case State::Ready: message = ui("Ready to search."); break;
-    case State::Searching: message = ui("Searching… %1").arg(count); break;
-    case State::Canceled: message = ui("Search canceled."); break;
+    case State::Searching: message = ui("Searching… %1").arg(counts); break;
+    case State::Canceled: message = ui("Search canceled.") + QStringLiteral(" ") + counts; break;
     case State::Error: message = failure; break;
     case State::Completed:
-        if (truncated) message = ui("Showing the first %1 matches.").arg(count);
-        else if (count == 0) message = ui("No matches.");
-        else if (count == 1) message = ui("1 match.");
-        else message = ui("%1 matches.").arg(count);
+        message = truncated ? scanned + QStringLiteral(" · ") + ui("Showing the first %1 matches.").arg(count) : counts;
         break;
     }
-    if (errors && state != State::Error) message += QStringLiteral("  ") + ui("File errors: %1").arg(errors);
-    status->setText(message);
-    status->setToolTip(message);
-    status->setAccessibleName(message);
+    status->setMessage(message, errors);
 }
 
 void MainWindow::showErrors()

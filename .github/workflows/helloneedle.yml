@@ -58,7 +58,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build qt6-base-dev qt6-qpa-plugins \
+          sudo apt-get install -y --no-install-recommends cmake ninja-build qt6-base-dev qt6-svg-dev qt6-qpa-plugins \
             qt6-gtk-platformtheme qt6-translations-l10n poppler-utils antiword dpkg-dev xvfb openbox dbus-daemon \
             fonts-dejavu-core libxcb-cursor0
       - name: Build the package and retain the transcript
@@ -116,7 +116,7 @@ jobs:
           (cd "$RUNNER_TEMP" && echo "$checksum  $installer" | shasum -a 256 -c)
           pkgutil --check-signature "$RUNNER_TEMP/$installer"
           sudo installer -pkg "$RUNNER_TEMP/$installer" -target /
-          sudo /opt/local/bin/port -N install qt6-qtbase qt6-qttranslations poppler antiword ninja pkgconfig zstd lzip
+          sudo /opt/local/bin/port -N install qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword ninja pkgconfig zstd lzip
           printf '%s\n' /opt/local/bin >> "$GITHUB_PATH"
           printf '%s\n' 'CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local' >> "$GITHUB_ENV"
       - name: Build the application and retain the transcript
@@ -337,7 +337,7 @@ jobs:
           envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA CARGO_BUILD_JOBS'
           prepare: |
             set -eu
-            pkg install -y git cmake ninja rust qt6-base qt6-translations poppler-utils antiword python3 \
+            pkg install -y git cmake ninja rust qt6-base qt6-svg qt6-translations poppler-utils antiword python3 \
               xorg-vfbserver openbox dbus dejavu
             dbus-uuidgen --ensure
           run: |
@@ -396,7 +396,7 @@ jobs:
           update: true
           install: >-
             git tar zstd lzip curl mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-translations
+            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-svg mingw-w64-ucrt-x86_64-qt6-translations
             mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-poppler-data mingw-w64-ucrt-x86_64-antiword
       - name: Record antiword behavior for Windows paths
@@ -529,7 +529,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            git mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-translations mingw-w64-ucrt-x86_64-python
+            git mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-svg mingw-w64-ucrt-x86_64-qt6-translations mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-antiword
       - name: Extract and test the shipped x64 executables on the Windows desktop
         shell: msys2 {0}

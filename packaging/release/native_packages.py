@@ -108,6 +108,10 @@ def validate_freebsd(records, receipt, files, version):
         raise ValueError('FreeBSD build or package manifests disagree')
     origins = {'qt6-base': 'devel/qt6-base', 'qt6-translations': 'devel/qt6-translations',
                'poppler-utils': 'graphics/poppler-utils', 'antiword': 'textproc/antiword'}
+    # The first release predates the SVG button artwork. Check the libraries
+    # actually linked by the build whose package is being verified.
+    if 'libQt6Svg.so' in receipt['runtime_linkage']['helloneedle']:
+        origins['qt6-svg'] = 'graphics/qt6-svg'
     installed = dict(line.split(' ', 1) for line in receipt['managed_packages'])
     for name, origin in origins.items():
         dep = compact['deps'].get(name, {})
@@ -124,6 +128,10 @@ def validate_debian(package, receipt, version):
     managed = {line.split()[0].split(':')[0] for line in receipt['managed_packages']}
     tools = {'qt6-qpa-plugins', 'qt6-translations-l10n', 'poppler-utils', 'antiword'}
     required = tools | {'libc6', 'libqt6core6t64', 'libqt6gui6t64', 'libqt6widgets6t64'}
+    if 'libQt6Svg.so' in receipt['runtime_linkage']['helloneedle']:
+        required.add('libqt6svg6')
+        if 'qt6-svg-dev' not in managed:
+            raise ValueError('Missing Qt SVG build inventory')
     dependencies = {dep.strip().split()[0] for dep in fields.get('Depends', '').split(',') if dep.strip()}
     if not required.issubset(dependencies) or not tools.issubset(managed):
         raise ValueError('Missing Ubuntu Qt or document runtime dependencies')

@@ -92,9 +92,6 @@ fn revision(path: &Path) -> Result<String, Failure> {
     if !meta.is_file() {
         return Err(Failure::new("read", "Expected a regular file"));
     }
-    if meta.len() > MAX_FILE_BYTES {
-        return Err(Failure::new("limit", "File exceeds the 64 MiB input limit"));
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -127,6 +124,15 @@ fn extract(path: &Path, mode: &str) -> Result<Option<Document>, Failure> {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    let large_html = mode == "document" && documents::is_html(&extension);
+    if !large_html
+        && fs::metadata(path)
+            .map_err(|e| Failure::new("read", e))?
+            .len()
+            > MAX_FILE_BYTES
+    {
+        return Err(Failure::new("limit", "File exceeds the 64 MiB input limit"));
+    }
     let document = match office::extract(path, &extension).map_err(Failure::decoder)? {
         Some(document) => Some(document),
         None => documents::extract(path, &extension, mode).map_err(Failure::decoder)?,
@@ -136,7 +142,7 @@ fn extract(path: &Path, mode: &str) -> Result<Option<Document>, Failure> {
             .blocks
             .iter()
             .fold(0usize, |size, block| size.saturating_add(block.text.len()));
-        if bytes > MAX_TEXT_BYTES || doc.blocks.len() > MAX_BLOCKS {
+        if !large_html && (bytes > MAX_TEXT_BYTES || doc.blocks.len() > MAX_BLOCKS) {
             return Err(Failure::new(
                 "limit",
                 "Extracted document exceeds the text or block limit",

@@ -16,7 +16,9 @@ QTranslator *nativeSpanish = nullptr;
 const QHash<QByteArray, QString> &spanish()
 {
     static const QHash<QByteArray, QString> strings{
-        {"%1 matches.", "%1 coincidencias."}, {"1 match.", "1 coincidencia."},
+        {"%1 documents scanned", "%1 documentos examinados"}, {"1 document scanned", "1 documento examinado"},
+        {"%1 matches", "%1 coincidencias"}, {"1 match", "1 coincidencia"},
+        {"%1 errors", "%1 errores"}, {"1 error", "1 error"},
         {"&File", "&Archivo"}, {"&Help", "A&yuda"}, {"&Language", "&Idioma"}, {"&Search", "&Buscar"},
         {"About Hello Needle", "Acerca de Hello Needle"}, {"Additional file errors: %1", "Otros errores de archivo: %1"},
         {"Based on Clapgrep by Leopold Luley and contributors.", "Basado en Clapgrep, de Leopold Luley y sus colaboradores."},
@@ -26,19 +28,21 @@ const QHash<QByteArray, QString> &spanish()
         {"Choose folder…", "Elegir carpeta…"}, {"Close", "Cerrar"},
         {"Created by Alfredo Llaquet-Alsina.", "Creado por Alfredo Llaquet-Alsina."},
         {"Details…", "Detalles…"}, {"Document preview", "Vista previa del documento"}, {"Document", "Documento"},
-        {"Enter a word or phrase.", "Introduce una palabra o frase."}, {"File errors: %1", "Errores de archivo: %1"},
+        {"Enter a word or phrase.", "Introduce una palabra o frase."},
         {"Find", "Buscar"}, {"Fit", "Ajustar"}, {"Fit page", "Ajustar página"}, {"Focus search field", "Ir al campo de búsqueda"},
         {"Folder", "Carpeta"}, {"For example, *.md", "Por ejemplo, *.md"},
         {"GNU General Public License, version 3 or later.", "Licencia Pública General de GNU, versión 3 o posterior."},
         {"Include hidden files", "Incluir archivos ocultos"}, {"Include ignored files", "Incluir archivos ignorados"},
         {"License files", "Archivos de licencia"}, {"License text", "Texto de la licencia"}, {"Licenses", "Licencias"},
         {"Loading page…", "Cargando página…"}, {"Loading preview…", "Cargando vista previa…"},
-        {"Next", "Siguiente"}, {"Next page", "Página siguiente"}, {"No matches.", "Sin coincidencias."},
+        {"Next", "Siguiente"}, {"Next page", "Página siguiente"},
+        {"Open TheCrumbs.org in your browser", "Abrir TheCrumbs.org en tu navegador"},
         {"Open original", "Abrir original"}, {"Open this file in its usual application.", "Abrir el archivo en su aplicación habitual."},
         {"Options", "Opciones"}, {"PDF page rendering requires Poppler (pdftoppm).", "La vista de páginas PDF requiere Poppler (pdftoppm)."},
         {"PDF page", "Página PDF"}, {"Page %1 of %2", "Página %1 de %2"}, {"Path filter", "Filtro de ruta"}, {"Preview", "Vista previa"},
         {"Previous", "Anterior"}, {"Previous page", "Página anterior"}, {"Programmed by ChatGPT.", "Programado por ChatGPT."},
-        {"Quit", "Salir"}, {"Ready to search.", "Todo listo para buscar."}, {"Regular expression", "Expresión regular"},
+        {"Quit", "Salir"}, {"Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org", "Lee Crumbs de Alfredo Llaquet-Alsina en TheCrumbs.org"},
+        {"Ready to search.", "Todo listo para buscar."}, {"Regular expression", "Expresión regular"},
         {"Results", "Resultados"}, {"Search canceled.", "Búsqueda cancelada."}, {"Search details", "Detalles de la búsqueda"},
         {"Search file names", "Buscar en los nombres de archivo"}, {"Search in", "Buscar en"},
         {"Search inside local documents.", "Busca en el contenido de documentos locales."},
@@ -122,6 +126,7 @@ QString locationLabel(const QJsonObject &loc, const QString &fallback)
         return ui("Table %1, row %2, column %3").arg(loc.value("table").toInt()).arg(loc.value("row").toInt()).arg(loc.value("column").toInt());
     if (loc.contains("line")) return ui("Line %1").arg(loc.value("line").toInt());
     if (loc.contains("paragraph")) return ui("Paragraph %1").arg(loc.value("paragraph").toInt());
+    if (loc.value("role") == "paragraph") return ui("Paragraph %1").arg(loc.value("index").toInt() + 1);
     if (loc.value("role") == "heading") return ui("Heading %1").arg(loc.value("index").toInt() + 1);
     if (active == "en" && !fallback.isEmpty()) return fallback;
     return ui("Passage %1").arg(loc.value("index").toInt() + 1);

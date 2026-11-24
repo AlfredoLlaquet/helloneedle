@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Readers whose natural locations are source lines, document blocks, or PDF pages.
 
+mod html;
 mod markup;
 mod pdf;
 
@@ -14,12 +15,19 @@ use std::path::Path;
 // Count as well as byte ceilings matter for files made up of empty lines.
 const MAX_BLOCKS: usize = 100_000;
 
+pub(crate) fn is_html(extension: &str) -> bool {
+    matches!(extension, "html" | "htm" | "xhtml")
+}
+
 pub fn extract(path: &Path, extension: &str, mode: &str) -> Result<Option<Document>> {
     if extension == "pdf" {
         return pdf::read(path).map(Some);
     }
+    if is_html(extension) && mode == "document" {
+        return html::read(File::open(path)?).map(Some);
+    }
     let kind = match extension {
-        "html" | "htm" | "xhtml" => "html",
+        ext if is_html(ext) => "html",
         "md" | "markdown" | "mdown" | "mkd" | "mkdn" => "markdown",
         _ => "text",
     };

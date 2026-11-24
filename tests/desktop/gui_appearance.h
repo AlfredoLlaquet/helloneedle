@@ -15,6 +15,7 @@ namespace guiqa {
 QString setAppearance(QApplication &app, const QString &requested);
 QJsonObject platformDetails(const QString &appearanceSource);
 QString inspectLayout(QWidget &window);
+QString inspectButtonIcons(QWidget &window, QJsonObject &metrics);
 QString inspectColors(QWidget &window, QJsonObject &colors);
 QString inspectMenuInk(QWidget &menu, const QRect &action, QJsonObject &metrics);
 QString inspectRenderedField(QLineEdit &edit, QJsonObject &metrics);

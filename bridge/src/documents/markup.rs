@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! CommonMark and HTML share one searchable projection and one preview sanitizer.
 
-use super::MAX_BLOCKS;
+use super::{html::Budget, MAX_BLOCKS};
 use crate::{Block, MAX_TEXT_BYTES};
 use anyhow::{ensure, Result};
+use ego_tree::iter::Edge;
 use pulldown_cmark::{html, Options, Parser};
 use scraper::{node::Node, ElementRef, Html, Selector};
 use serde_json::json;
@@ -82,8 +83,15 @@ pub(super) fn project(source: &str, markdown: bool) -> Result<Vec<Block>> {
     );
     // Parsing constructs a tree in memory; it never opens the URLs in the input.
     let document = Html::parse_document(html_source);
-    let mut projection = Projection::default();
-    projection.element(document.root_element(), 0)?;
+    project_tree(&document, None)
+}
+
+pub(super) fn project_tree(document: &Html, budget: Option<&Budget>) -> Result<Vec<Block>> {
+    let mut projection = Projection {
+        budget,
+        ..Projection::default()
+    };
+    projection.walk(document.root_element())?;
     projection.finish()?;
     Ok(projection.blocks)
 }
@@ -113,7 +121,8 @@ impl Role {
 }
 
 #[derive(Default)]
-struct Projection {
+struct Projection<'a> {
+    budget: Option<&'a Budget>,
     blocks: Vec<Block>,
     bytes: usize,
     role: Role,
@@ -128,9 +137,58 @@ struct Projection {
     marker: Option<String>,
 }
 
-impl Projection {
-    fn element(&mut self, element: ElementRef<'_>, depth: usize) -> Result<()> {
-        ensure!(depth < MAX_DEPTH, "too_large: markup nesting exceeds limit");
+struct Frame {
+    previous_role: Role,
+    previous_marker: Option<String>,
+    styled: bool,
+    boundary: bool,
+}
+
+impl Projection<'_> {
+    fn reserve(&self, bytes: usize) -> Result<()> {
+        if let Some(budget) = self.budget {
+            budget.reserve(bytes)?;
+        }
+        Ok(())
+    }
+
+    fn walk(&mut self, root: ElementRef<'_>) -> Result<()> {
+        // The input may have more levels than the native call stack can hold.
+        let mut frames = Vec::new();
+        let mut ignored_depth = 0usize;
+        for edge in root.traverse() {
+            match edge {
+                Edge::Open(node) if ignored_depth == 0 => {
+                    if let Some(element) = ElementRef::wrap(node) {
+                        ensure!(
+                            self.budget.is_some() || frames.len() < MAX_DEPTH,
+                            "too_large: markup nesting exceeds limit"
+                        );
+                        if let Some(frame) = self.enter(element)? {
+                            frames.push(frame);
+                        } else {
+                            ignored_depth = 1;
+                        }
+                    } else if let Node::Text(text) = node.value() {
+                        self.append(text)?;
+                    } else {
+                        ignored_depth = 1;
+                    }
+                }
+                Edge::Open(_) => ignored_depth += 1,
+                Edge::Close(_) if ignored_depth != 0 => ignored_depth -= 1,
+                Edge::Close(node) => {
+                    if let Some(element) = ElementRef::wrap(node) {
+                        let frame = frames.pop().expect("paired HTML traversal edges");
+                        self.leave(element.value().name(), frame)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn enter(&mut self, element: ElementRef<'_>) -> Result<Option<Frame>> {
         let value = element.value();
         let name = value.name();
         if is_hidden(&element)
@@ -156,23 +214,27 @@ impl Projection {
                     | "button"
             )
         {
-            return Ok(());
+            return Ok(None);
         }
         match name {
             "br" => {
                 self.pending_space = false;
-                self.sync_styles();
+                self.reserve(12)?;
+                self.sync_styles()?;
                 self.text.push('\n');
                 self.fragment.push_str("<br/>");
-                return Ok(());
+                return Ok(None);
             }
-            "hr" => return self.finish(),
+            "hr" => {
+                self.finish()?;
+                return Ok(None);
+            }
             // Only the human-readable alternate text belongs in this offline preview.
             "img" => {
                 if let Some(alt) = value.attr("alt") {
-                    self.append(alt);
+                    self.append(alt)?;
                 }
-                return Ok(());
+                return Ok(None);
             }
             _ => {}
         }
@@ -258,32 +320,51 @@ impl Projection {
         if let Some(style) = style {
             self.styles.push(style);
         }
-        for child in element.children() {
-            if let Node::Text(text) = child.value() {
-                self.append(text);
-            } else if let Some(child) = ElementRef::wrap(child) {
-                self.element(child, depth + 1)?;
-            }
-        }
-        if style.is_some() {
+        Ok(Some(Frame {
+            previous_role: old_role,
+            previous_marker: old_marker,
+            styled: style.is_some(),
+            boundary,
+        }))
+    }
+
+    fn leave(&mut self, name: &str, frame: Frame) -> Result<()> {
+        if frame.styled {
             self.styles.pop();
         }
-        if boundary {
+        if frame.boundary {
             self.finish()?;
         }
         if name == "li" {
-            self.marker = old_marker;
+            self.marker = frame.previous_marker;
         }
         if matches!(name, "ul" | "ol") {
             self.lists.pop();
         }
-        self.role = old_role;
+        self.role = frame.previous_role;
         Ok(())
     }
 
-    fn append(&mut self, input: &str) {
+    fn append(&mut self, input: &str) -> Result<()> {
         if input.is_empty() {
-            return;
+            return Ok(());
+        }
+        if self.budget.is_some() {
+            // Two output strings and their growth capacity; account for escaping before allocating.
+            let escapes: usize = input
+                .bytes()
+                .map(|b| match b {
+                    b'&' => 4,
+                    b'<' | b'>' => 3,
+                    _ => 0,
+                })
+                .sum();
+            self.reserve(
+                input
+                    .len()
+                    .saturating_mul(4)
+                    .saturating_add(escapes.saturating_mul(2)),
+            )?;
         }
         let normalized;
         let text = if matches!(self.role, Role::Pre) {
@@ -294,12 +375,15 @@ impl Projection {
                 if matches!(ch, ' ' | '\t' | '\r' | '\n' | '\u{c}' | '\u{a0}') {
                     self.pending_space = true;
                 } else {
-                    if self.pending_space
-                        && (!output.is_empty() || !self.text.is_empty())
-                        && !(output.ends_with('\n')
-                            || output.is_empty() && self.text.ends_with('\n'))
-                    {
-                        output.push(' ');
+                    if self.pending_space {
+                        let previous = if output.is_empty() {
+                            &self.text
+                        } else {
+                            &output
+                        };
+                        if !previous.is_empty() && !previous.ends_with('\n') {
+                            output.push(' ');
+                        }
                     }
                     self.pending_space = false;
                     output.push(ch);
@@ -309,20 +393,24 @@ impl Projection {
             &normalized
         };
         if text.is_empty() {
-            return;
+            return Ok(());
         }
-        self.sync_styles();
+        self.sync_styles()?;
         self.text.push_str(text);
         escape_into(&mut self.fragment, text);
+        Ok(())
     }
 
-    fn sync_styles(&mut self) {
+    fn sync_styles(&mut self) -> Result<()> {
         let common = self
             .emitted_styles
             .iter()
             .zip(&self.styles)
             .take_while(|(a, b)| a == b)
             .count();
+        self.reserve(
+            (self.emitted_styles.len() - common + self.styles.len() - common).saturating_mul(20),
+        )?;
         for tag in self.emitted_styles.drain(common..).rev() {
             self.fragment.push_str("</");
             self.fragment.push_str(tag);
@@ -334,6 +422,7 @@ impl Projection {
             self.fragment.push('>');
             self.emitted_styles.push(tag);
         }
+        Ok(())
     }
 
     fn finish(&mut self) -> Result<()> {
@@ -341,8 +430,9 @@ impl Projection {
         if self.text.is_empty() {
             return Ok(());
         }
+        self.reserve(1024 + 20 * self.emitted_styles.len())?;
         ensure!(
-            self.blocks.len() < MAX_BLOCKS,
+            self.budget.is_some() || self.blocks.len() < MAX_BLOCKS,
             "too_large: too many document blocks"
         );
         for tag in self.emitted_styles.drain(..).rev() {
@@ -375,7 +465,7 @@ impl Projection {
             .saturating_add(text.len())
             .saturating_add(html.len());
         ensure!(
-            self.bytes <= MAX_TEXT_BYTES,
+            self.budget.is_some() || self.bytes <= MAX_TEXT_BYTES,
             "too_large: formatted text exceeds limit"
         );
         self.blocks
@@ -393,17 +483,19 @@ fn is_hidden(element: &ElementRef<'_>) -> bool {
     {
         return true;
     }
-    value.attr("style").is_some_and(|style| {
-        style.split(';').any(|declaration| {
-            let Some((property, value)) = declaration.split_once(':') else {
-                return false;
-            };
-            let value = value.split('!').next().unwrap_or("").trim();
-            property.trim().eq_ignore_ascii_case("display") && value.eq_ignore_ascii_case("none")
-                || property.trim().eq_ignore_ascii_case("visibility")
-                    && value.eq_ignore_ascii_case("hidden")
-        })
-    })
+    value
+        .attr("style")
+        .is_some_and(|style| style.split(';').any(hides))
+}
+
+pub(super) fn hides(declaration: &str) -> bool {
+    let Some((property, value)) = declaration.split_once(':') else {
+        return false;
+    };
+    let value = value.split('!').next().unwrap_or("").trim();
+    property.trim().eq_ignore_ascii_case("display") && value.eq_ignore_ascii_case("none")
+        || property.trim().eq_ignore_ascii_case("visibility")
+            && value.eq_ignore_ascii_case("hidden")
 }
 
 fn escape_into(output: &mut String, text: &str) {

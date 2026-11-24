@@ -19,6 +19,7 @@ public:
     void retranslate();
     void openOriginal();
 private:
+    void updateTitle();
     void load(const QJsonObject &location, bool first);
     void present(const QJsonObject &data, bool first);
     void displayError(const QString &message);
@@ -26,7 +27,6 @@ private:
     QJsonObject match;
     WorkerClient worker;
     QLabel *name;
-    QLabel *place;
     QPushButton *open;
     QPushButton *toggle;
     QStackedWidget *stack;

@@ -19,6 +19,7 @@ class QTreeWidgetItem;
 
 namespace hn {
 class PreviewPane;
+class SearchStatus;
 class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
@@ -55,7 +56,7 @@ private:
     QLabel *patternLabel = nullptr;
     QLabel *modeLabel = nullptr;
     QLabel *resultsLabel = nullptr;
-    QLabel *status = nullptr;
+    SearchStatus *status = nullptr;
     QCheckBox *regex = nullptr;
     QCheckBox *respectCase = nullptr;
     QCheckBox *hidden = nullptr;
@@ -67,7 +68,6 @@ private:
     QToolButton *options = nullptr;
     QWidget *optionsPane = nullptr;
     QComboBox *mode = nullptr;
-    QPushButton *issues = nullptr;
     QSplitter *splitter = nullptr;
     QTreeWidget *results = nullptr;
     PreviewPane *preview = nullptr;
@@ -89,6 +89,7 @@ private:
     QList<QJsonObject> problems;
     State state = State::Ready;
     qsizetype count = 0;
+    qint64 documentsScanned = 0;
     int errors = 0;
     bool truncated = false;
     QString failure;

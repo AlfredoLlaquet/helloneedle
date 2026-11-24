@@ -28,7 +28,7 @@ Install MSYS2 from https://www.msys2.org/ and open its UCRT64 terminal.
 Update the installation and install the runtime packages with
 
     pacman -Syu
-    pacman -S --needed mingw-w64-ucrt-x86_64-{qt6-base,qt6-translations,poppler,antiword}
+    pacman -S --needed mingw-w64-ucrt-x86_64-{qt6-base,qt6-svg,qt6-translations,poppler,antiword}
 
 If pacman asks to close the terminal, reopen UCRT64 and complete the update.
 Use Extract All in Explorer and double-click Hello Needle.exe at the top

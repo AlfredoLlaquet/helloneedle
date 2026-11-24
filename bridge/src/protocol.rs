@@ -41,6 +41,8 @@ struct PreviewRequest {
     mode: String,
     #[serde(default)]
     location: Value,
+    #[serde(default)]
+    block_start: usize,
     revision: Option<String>,
 }
 
@@ -55,6 +57,7 @@ fn valid_mode(mode: &str) -> bool {
 pub(crate) struct Emitter<W> {
     pub count: usize,
     pub files: usize,
+    pub documents_scanned: usize,
     pub errors: usize,
     pub truncated: bool,
     writer: W,
@@ -87,6 +90,7 @@ impl<W: Write> Emitter<W> {
 
     fn done(&mut self) -> io::Result<()> {
         self.send(&json!({"type":"done","count":self.count,"files":self.files,
+                         "documentsScanned":self.documents_scanned,
                          "errors":self.errors,"truncated":self.truncated}))
     }
 }
@@ -114,6 +118,65 @@ fn context_range(blocks: &[Block], index: usize, kind: &str) -> std::ops::Range<
     first..end
 }
 
+// A selected HTML paragraph can now exceed the desktop's entire protocol frame.
+// Keep ordinary previews rich. For a giant paragraph, send the text around the
+// selected occurrence and its original UTF-16 offset for Qt's highlighter.
+fn clip_html_paragraph(block: &mut Block, focus: usize) {
+    block.html = None;
+    const NEARBY_CHARS: usize = 8192;
+    if block.text.len() <= 2 * NEARBY_CHARS {
+        return;
+    }
+    let mut units = 0;
+    let center = block
+        .text
+        .char_indices()
+        .find_map(|(byte, ch)| {
+            if units + ch.len_utf16() > focus {
+                return Some(byte);
+            }
+            units += ch.len_utf16();
+            None
+        })
+        .unwrap_or(block.text.len());
+    let left = block.text[..center]
+        .char_indices()
+        .rev()
+        .nth(NEARBY_CHARS - 1)
+        .map_or(0, |(byte, _)| byte);
+    let right = block.text[center..]
+        .char_indices()
+        .nth(NEARBY_CHARS)
+        .map_or(block.text.len(), |(byte, _)| center + byte);
+    block.location["textOffset"] = json!(units - block.text[left..center].encode_utf16().count());
+    block.text = block.text[left..right].to_owned();
+}
+
+fn html_context(
+    blocks: &mut [Block],
+    index: usize,
+    focus: usize,
+    mut range: std::ops::Range<usize>,
+) -> std::ops::Range<usize> {
+    // Even the worst-case JSON escaping of 8 MiB fits a 64 MiB frame.
+    const MAX_CONTEXT: usize = 8 * 1024 * 1024;
+    let size = |b: &Block| b.text.len() + b.html.as_ref().map_or(0, String::len);
+    if size(&blocks[index]) > MAX_CONTEXT {
+        clip_html_paragraph(&mut blocks[index], focus);
+    }
+    let mut total: usize = blocks[range.clone()].iter().map(size).sum();
+    while total > MAX_CONTEXT {
+        if index - range.start > range.end - 1 - index {
+            total -= size(&blocks[range.start]);
+            range.start += 1;
+        } else {
+            range.end -= 1;
+            total -= size(&blocks[range.end]);
+        }
+    }
+    range
+}
+
 fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Result<()> {
     if !valid_mode(&request.mode) {
         return events.error(
@@ -135,7 +198,7 @@ fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Re
             Some(&path),
         );
     }
-    let doc = match extract(&path, &request.mode) {
+    let mut doc = match extract(&path, &request.mode) {
         Ok(Some(doc)) => doc,
         Ok(None) => {
             return events.error(
@@ -194,7 +257,12 @@ fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Re
     let range = if doc.blocks.is_empty() {
         0..0
     } else {
-        context_range(&doc.blocks, index, &doc.kind)
+        let range = context_range(&doc.blocks, index, &doc.kind);
+        if doc.kind == "html" && request.mode == "document" {
+            html_context(&mut doc.blocks, index, request.block_start, range)
+        } else {
+            range
+        }
     };
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -225,6 +293,7 @@ pub fn run<R: Read, W: Write>(command: &str, input: R, output: W) -> io::Result<
         writer: output,
         count: 0,
         files: 0,
+        documents_scanned: 0,
         errors: 0,
         truncated: false,
     };
@@ -366,5 +435,19 @@ mod tests {
         assert!(full
             .iter()
             .any(|r| r["kind"] == "filename" && r["location"]["filename"] == true));
+    }
+
+    #[test]
+    fn a_partially_searched_file_does_not_inflate_the_completed_count() {
+        let dir = Folder::new();
+        fs::write(dir.0.join("a.txt"), "no occurrences").unwrap();
+        fs::write(dir.0.join("b.txt"), "x ".repeat(10_001)).unwrap();
+        let response = events("search", json!({"folder":dir.0, "query":"x"}));
+        assert_eq!(response[0], json!({"type":"progress","documentsScanned":1}));
+        let done = response.last().unwrap();
+        assert_eq!(done["count"], 10_000);
+        assert_eq!(done["files"], 2);
+        assert_eq!(done["documentsScanned"], 1);
+        assert_eq!(done["truncated"], true);
     }
 }

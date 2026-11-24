@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QHash>
+#include <QIcon>
 #include <QImage>
 #include <QJsonArray>
 #include <QLabel>
@@ -22,6 +23,7 @@
 #include <QStyle>
 #include <QStyleHints>
 #include <QStyleOptionButton>
+#include <QStatusBar>
 #include <QSysInfo>
 #include <QTest>
 #include <QTextBrowser>
@@ -230,6 +232,79 @@ QString inspectLayout(QWidget &window)
         if (b->fontMetrics().horizontalAdvance(label) > content.width() + 2 ||
             b->fontMetrics().height() > b->height() + 1)
             return QString("%1 clips '%2' (%3 px available)").arg(name, label).arg(content.width());
+    }
+    auto *options = window.findChild<QWidget *>("optionsButton");
+    auto *modeLabel = window.findChild<QLabel *>("modeLabel");
+    auto *mode = window.findChild<QWidget *>("modeCombo");
+    auto rectIn = [](QWidget *child, QWidget *parent) {
+        return QRect(child->mapTo(parent, QPoint()), child->size());
+    };
+    if (!options || !modeLabel || !mode)
+        return "Missing search mode controls";
+    const auto label = rectIn(modeLabel, &window), combo = rectIn(mode, &window);
+    const auto option = rectIn(options, &window), pair = label.united(combo);
+    if (std::abs(label.center().y() - combo.center().y()) > 6 ||
+        std::abs(option.center().y() - combo.center().y()) > 6 ||
+        combo.left() - label.right() > 30 ||
+        std::max(option.left() - pair.right(), pair.left() - option.right()) > 30)
+        return "Search in and its selector are not adjacent to Options";
+
+    auto *bar = window.findChild<QStatusBar *>();
+    auto *link = window.findChild<QWidget *>("crumbsLink");
+    auto *counts = window.findChild<QWidget *>("statusLabel");
+    auto *errors = window.findChild<QWidget *>("errorCountLabel");
+    auto *details = window.findChild<QWidget *>("issuesButton");
+    if (!bar || !link || !counts || !errors || !details || !link->isVisible())
+        return "Missing status bar controls";
+    const auto credit = rectIn(link, bar);
+    if (std::abs(credit.center().x() - bar->rect().center().x()) > 3 ||
+        !bar->rect().contains(credit) || credit.intersects(rectIn(counts, bar)))
+        return "Crumbs text is off-center, clipped, or overlaps the progress display";
+    if (errors->isVisible() != details->isVisible())
+        return "Error count and Details are not shown together";
+    if (details->isVisible()) {
+        const auto countRect = rectIn(errors, bar), button = rectIn(details, bar);
+        if (credit.intersects(countRect) || credit.intersects(button) ||
+            std::abs(countRect.center().y() - button.center().y()) > 6 ||
+            button.left() < countRect.left() || button.left() - countRect.right() > 30)
+            return "Error count and Details are not together on the right";
+    }
+    return {};
+}
+
+QString inspectButtonIcons(QWidget &window, QJsonObject &metrics)
+{
+    QList<QImage> shapes;
+    for (const char *name : {"browseButton", "searchButton", "cancelButton", "optionsButton",
+                             "issuesButton", "openOriginalButton"}) {
+        auto *button = window.findChild<QAbstractButton *>(name);
+        if (!button || button->text().isEmpty() || button->icon().isNull())
+            return QString("%1 needs both a label and an icon").arg(name);
+        for (const auto mode : {QIcon::Normal, QIcon::Disabled}) {
+            const QImage image = button->icon().pixmap(QSize(24, 24), 1.0, mode).toImage();
+            const auto group = mode == QIcon::Normal ? QPalette::Active : QPalette::Disabled;
+            const auto background = button->palette().color(group, QPalette::Button);
+            int visible = 0;
+            double peak = 1;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x) {
+                    const QColor ink = image.pixelColor(x, y);
+                    if (ink.alpha() > 32) {
+                        ++visible;
+                        peak = std::max(peak, contrast(ink, background));
+                    }
+                }
+            if (visible < 12 || visible == image.width() * image.height())
+                return QString("%1 has no discernible icon shape").arg(name);
+            if (mode == QIcon::Normal) {
+                if (button->isEnabled() && peak < 3.0)
+                    return QString("%1 icon blends into the button background").arg(name);
+                if (shapes.contains(image))
+                    return QString("%1 duplicates another action's icon").arg(name);
+                shapes.append(image);
+                metrics[name] = peak;
+            }
+        }
     }
     return {};
 }

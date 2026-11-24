@@ -61,9 +61,18 @@ The app has an ad hoc signature and has not been notarized by Apple. If macOS bl
 2. Type a word or phrase in **Find** and press **Enter**. Hello Needle lists the files containing it. Expand a filename to see each occurrence.
 3. Select an occurrence to read it in the preview. **Open original** opens the file in its usual application. Searching and previewing leave your documents untouched.
 
-In this FreeBSD screenshot, the search found `Needle` twice on page 2 of `report.pdf`. The second result is selected, so the preview highlights the second occurrence. **Show text** displays the words as selectable text. **Show page** returns to the printed page.
+In this FreeBSD screenshot from version 1.0.0, the search found `Needle` twice on page 2 of `report.pdf`. The second result is selected, so the preview highlights the second occurrence. **Show text** displays the words as selectable text. **Show page** returns to the printed page.
 
 ![Hello Needle on FreeBSD with the second occurrence of “Needle” highlighted on page 2 of a PDF](docs/screenshots/1.0.0/freebsd-pdf-search.png)
+
+### Changes since the 1.0.0 release
+
+The downloads above install version 1.0.0. The following features are available when you build the current source. [Build instructions](#build-from-source)
+
+- **Search saved web pages with embedded pictures.** Choose **Document** beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The reader uses a 1 GiB memory budget per document. If it reaches that budget, it reports the file under **Details…** and continues searching. **Source** searches the original markup under its existing size limits.
+- **Follow a search as it runs.** The left of the status bar shows documents scanned and matches found. A successfully searched document counts once, even if it contains no matches. If any files cause errors, the error count appears on the right beside **Details…**. Click the button for the filenames and reasons.
+- **Identify the selected result.** The preview heading gives the location followed by the filename, for example `Paragraph 12 - Meeting notes.docx`. A long heading can wrap onto a second line. Directly below it, **Open original** opens the file in its usual application. The buttons include labeled icons that follow the light or dark theme and come with the app on every platform.
+- **Visit TheCrumbs.org.** The centered link reads `Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org`. Hovering over it underlines the whole sentence and shows the hint `Open TheCrumbs.org in your browser`. Clicking anywhere on the text opens the site in your default browser.
 
 ### Documents and previews
 
@@ -90,7 +99,7 @@ Open **Options** to limit the search to certain files or change what counts as a
 - Turn on **Case sensitive** to distinguish `May` from `may`. Turn on **Regular expression** to search for a pattern.
 - Turn on **Search file names** to include matches in filenames as well as in their contents. **Include hidden files** and **Include ignored files** let you search files the default search skips.
 
-Press **Escape** to cancel a search. **Ctrl+F** returns to the search field and **Ctrl+O** opens the folder chooser. On a Mac use **Command+F** and **Command+O**. If a file cannot be read, the other files are still searched. Click **Details…** beside the status message to see which file caused the problem.
+Press **Escape** to cancel a search. **Ctrl+F** returns to the search field and **Ctrl+O** opens the folder chooser. On a Mac use **Command+F** and **Command+O**. If a file cannot be read, the other files are still searched. Click **Details…** in the status bar to see which file caused the problem.
 
 ### English and Spanish
 
@@ -119,7 +128,7 @@ These instructions build the current source. Pick your system below. To build th
 On FreeBSD 15.1, install the compiler tools, Qt, and the PDF and Word readers as **root**. The C++ compiler comes with the base system.
 
 ```sh
-pkg install git cmake ninja rust python3 qt6-base qt6-translations poppler-utils antiword
+pkg install git cmake ninja rust python3 qt6-base qt6-svg qt6-translations poppler-utils antiword
 ```
 
 As your **desktop account**, get the source and build the application.
@@ -145,7 +154,7 @@ On an Ubuntu 24.04 desktop, open Terminal and install the development packages.
 
 ```sh
 sudo apt update
-sudo apt install git curl build-essential cmake ninja-build python3 qt6-base-dev \
+sudo apt install git curl build-essential cmake ninja-build python3 qt6-base-dev qt6-svg-dev \
   qt6-qpa-plugins qt6-translations-l10n poppler-utils antiword
 ```
 
@@ -177,7 +186,7 @@ Install Git, the UCRT64 compilers, Qt, and the document readers.
 ```sh
 pacman -S --needed git \
   mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python} \
-  mingw-w64-ucrt-x86_64-{qt6-base,qt6-translations,poppler,poppler-data,antiword}
+  mingw-w64-ucrt-x86_64-{qt6-base,qt6-svg,qt6-translations,poppler,poppler-data,antiword}
 ```
 
 Get the source, build it, and install a local copy in a folder named `stage` inside the checkout.
@@ -202,7 +211,7 @@ Open Terminal and install the tools and libraries. The commands use the standard
 ```sh
 export PATH="/opt/local/bin:/opt/local/sbin:$PATH"
 export CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local
-sudo /opt/local/bin/port install cmake ninja rust cargo python313 qt6-qtbase qt6-qttranslations poppler antiword
+sudo /opt/local/bin/port install cmake ninja rust cargo python313 qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword
 ```
 
 Get the source and compile it for your Mac’s processor. Install the application in your own **Applications** folder.

@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use std::{
     io::{self, Write},
     path::Path,
+    time::{Duration, Instant},
 };
 
 const MAX_RESULTS: usize = 10_000;
@@ -185,6 +186,7 @@ pub(crate) fn run<W: Write>(req: SearchRequest, sink: &mut Emitter<W>) -> io::Re
         require_literal_separator: false,
         require_literal_leading_dot: false,
     };
+    let mut last_progress = Instant::now();
     for item in walker {
         let entry = match item {
             Ok(entry) => entry,
@@ -251,6 +253,11 @@ pub(crate) fn run<W: Write>(req: SearchRequest, sink: &mut Emitter<W>) -> io::Re
         }
         if sink.truncated {
             break;
+        }
+        sink.documents_scanned += 1;
+        if sink.documents_scanned == 1 || last_progress.elapsed() >= Duration::from_millis(100) {
+            sink.send(&json!({"type":"progress","documentsScanned":sink.documents_scanned}))?;
+            last_progress = Instant::now();
         }
     }
     Ok(())
