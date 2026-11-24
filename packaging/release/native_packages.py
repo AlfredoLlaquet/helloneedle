@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check complete FreeBSD and Ubuntu package artifacts without installing or executing them."""
+from dataclasses import dataclass
 from email.parser import Parser
 import hashlib
 import json
@@ -12,10 +13,30 @@ import tarfile
 import tempfile
 import zipfile
 
-PACKAGES = {
-    'helloneedle-freebsd-15.1-amd64': ('helloneedle-{version}.pkg', 'FreeBSD 15.1 amd64, pkg and native X11'),
-    'helloneedle-ubuntu-24.04-x64': ('helloneedle_{version}_amd64.deb', 'Ubuntu 24.04 x64, Debian package and native X11'),
-}
+@dataclass(frozen=True)
+class Package:
+    artifact: str
+    filename: str
+    jobs: tuple[str, ...]
+    freebsd_release: str = ''
+
+
+def package_targets(version):
+    # The immutable 1.0.0 release distributed one FreeBSD binary under its original name.
+    releases = ('15.1',) if version == '1.0.0' else ('15.1', '14.4')
+    targets = []
+    for release in releases:
+        major = release.split('.')[0]
+        filename = f'helloneedle-{version}-FreeBSD-{major}-amd64.pkg'
+        if version == '1.0.0':
+            filename = f'helloneedle-{version}.pkg'
+        jobs = (f'FreeBSD {release} amd64, pkg and native X11',)
+        if release == '14.4':
+            jobs += ('Install the FreeBSD 14.x package on FreeBSD 14.5 amd64',)
+        targets.append(Package(f'helloneedle-freebsd-{release}-amd64', filename, jobs, release))
+    targets.append(Package('helloneedle-ubuntu-24.04-x64', f'helloneedle_{version}_amd64.deb',
+                           ('Ubuntu 24.04 x64, Debian package and native X11',)))
+    return targets
 
 
 def digest(path):
@@ -44,7 +65,10 @@ def checksums(path, *, payload=False):
 
 
 def verify_payload(package, inventory, revision, version):
-    freebsd = package.suffix == '.pkg'
+    target = next((t for t in package_targets(version) if t.filename == package.name), None)
+    if target is None:
+        raise ValueError(f'Unexpected release package filename: {package.name}')
+    freebsd = bool(target.freebsd_release)
     expected = checksums(inventory, payload=True)
     prefix = 'usr/local' if freebsd else 'usr'
     executables = {f'{prefix}/bin/helloneedle', f'{prefix}/bin/helloneedle-worker'}
@@ -91,19 +115,23 @@ def verify_payload(package, inventory, revision, version):
     if (receipt['commit'], receipt['version'], receipt['corresponding_source']) != (revision, version, source):
         raise ValueError(f'Embedded build revision, source or version differs in {package.name}')
     if freebsd:
-        validate_freebsd(records, receipt, expected, version)
+        validate_freebsd(records, receipt, expected, version, target.freebsd_release)
     else:
         validate_debian(package, receipt, version)
 
 
-def validate_freebsd(records, receipt, files, version):
+def validate_freebsd(records, receipt, files, version, release):
     compact, full = records['+COMPACT_MANIFEST'], records['+MANIFEST']
+    major = release.split('.')[0]
     fields = {'name': 'helloneedle', 'origin': 'deskutils/helloneedle', 'prefix': '/usr/local', 'version': version,
-              'abi': 'FreeBSD:15:amd64', 'arch': 'freebsd:15:x86:64'}
+              'abi': f'FreeBSD:{major}:amd64', 'arch': f'freebsd:{major}:x86:64'}
     for info in (compact, full):
         if any(info.get(k) != value for k, value in fields.items()):
             raise ValueError('Unexpected FreeBSD package name, version, origin, ABI or architecture')
-    if (receipt['machine'] != 'amd64' or not receipt['operating_system'].splitlines()[0].startswith('15.1-RELEASE')
+    kernel_and_userland = receipt['operating_system'].splitlines()
+    release_pattern = re.escape(release) + r'-RELEASE(?:-p\d+)?'
+    if (receipt['machine'] != 'amd64' or not kernel_and_userland
+            or any(not re.fullmatch(release_pattern, v) for v in kernel_and_userland)
             or set(full['files']) != {'/' + k for k in files} or compact['deps'] != full['deps']):
         raise ValueError('FreeBSD build or package manifests disagree')
     origins = {'qt6-base': 'devel/qt6-base', 'qt6-translations': 'devel/qt6-translations',
@@ -142,13 +170,13 @@ def add_packages(repo, run_id, revision, version, dest):
     def pages(suffix, key):
         result = subprocess.check_output(['gh', 'api', '--paginate', '--slurp', endpoint + suffix])
         return [v for page in json.loads(result) for v in page[key]]
-    jobs = {(j['name'], j['conclusion']) for j in pages('/jobs?filter=latest&per_page=100', 'jobs')}
+    successful = {j['name'] for j in pages('/jobs?filter=latest&per_page=100', 'jobs') if j['conclusion'] == 'success'}
     artifacts = pages('/artifacts?per_page=100', 'artifacts')
-    for name, (template, job) in PACKAGES.items():
-        filename = template.format(version=version)
-        matches = [a for a in artifacts if a['name'] == name]
-        if (job, 'success') not in jobs or len(matches) != 1 or matches[0]['expired']:
-            raise ValueError(f'Missing successful native test or unique live artifact for {name}')
+    for target in package_targets(version):
+        filename = target.filename
+        matches = [a for a in artifacts if a['name'] == target.artifact]
+        if not successful.issuperset(target.jobs) or len(matches) != 1 or matches[0]['expired']:
+            raise ValueError(f'Missing successful native test or unique live artifact for {target.artifact}')
         item = matches[0]
         with tempfile.TemporaryDirectory(dir=dest.parent) as temp:
             folder = Path(temp)
@@ -156,12 +184,12 @@ def add_packages(repo, run_id, revision, version, dest):
             with wrapper.open('wb') as out:
                 subprocess.run(['gh', 'api', f'repos/{repo}/actions/artifacts/{int(item["id"])}/zip'], stdout=out, check=True)
             if item.get('digest') != 'sha256:' + digest(wrapper):
-                raise ValueError(f'Downloaded Actions archive differs from GitHub digest: {name}')
+                raise ValueError(f'Downloaded Actions archive differs from GitHub digest: {target.artifact}')
             with zipfile.ZipFile(wrapper) as archive:
                 members = archive.infolist()
                 wanted = {filename, 'SHA256SUMS', 'CONTENTS.sha256'}
                 if len(members) != len(wanted) or {m.filename for m in members} != wanted:
-                    raise ValueError(f'Unexpected files in native artifact: {name}')
+                    raise ValueError(f'Unexpected files in native artifact: {target.artifact}')
                 for member in members:
                     if member.is_dir() or stat.S_ISLNK(member.external_attr >> 16):
                         raise ValueError(f'Unexpected link in native artifact: {member.filename}')

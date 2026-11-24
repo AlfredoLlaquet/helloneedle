@@ -8,40 +8,49 @@ Created by **Alfredo Llaquet-Alsina**. Programmed by **ChatGPT**.
 
 ## Download Hello Needle
 
-Hello Needle 1.0.0 is free to download and use. Choose the file for your computer.
+Hello Needle 1.1.0 is free to download and use. Choose the file for your computer.
 
 | Your system | Download | Installation instructions |
 | --- | --- | --- |
-| **FreeBSD 15.1, amd64** | [Download the FreeBSD package (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.0.0/helloneedle-1.0.0.pkg) | [Install on FreeBSD](#install-on-freebsd) |
-| **Ubuntu 24.04 LTS, amd64** | [Download the Ubuntu package (.deb)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.0.0/helloneedle_1.0.0_amd64.deb) | [Install on Ubuntu](#install-on-ubuntu) |
-| **Windows 10 (1903 or later) or Windows 11, x64** | [Download the Windows installer (.exe)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.0.0/HelloNeedle-1.0.0-Windows-x64-Setup.exe) | [Install on Windows](#install-on-windows) |
-| **macOS 15 or later, Apple Silicon or Intel** | [Download the Mac disk image (.dmg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.0.0/HelloNeedle-1.0.0-macOS-Universal.dmg) | [Install on macOS](#install-on-macos) |
+| **FreeBSD 14.x, amd64** | [Download for FreeBSD 14.x (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle-1.1.0-FreeBSD-14-amd64.pkg) | [Install on FreeBSD](#install-on-freebsd) |
+| **FreeBSD 15.x, amd64** | [Download for FreeBSD 15.x (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle-1.1.0-FreeBSD-15-amd64.pkg) | [Install on FreeBSD](#install-on-freebsd) |
+| **Ubuntu 24.04 LTS, amd64** | [Download the Ubuntu package (.deb)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle_1.1.0_amd64.deb) | [Install on Ubuntu](#install-on-ubuntu) |
+| **Windows 10 (1903 or later) or Windows 11, x64** | [Download the Windows installer (.exe)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-Windows-x64-Setup.exe) | [Install on Windows](#install-on-windows) |
+| **macOS 15 or later, Apple Silicon or Intel** | [Download the Mac disk image (.dmg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-macOS-Universal.dmg) | [Install on macOS](#install-on-macos) |
 
-The Windows x64 installer also runs on Windows 11 on Arm. The Mac download runs natively on both kinds of Mac. The release page includes the source code and checksums for these exact files. [Hello Needle 1.0.0 release](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.0.0)
+The Windows x64 installer also runs on Windows 11 on Arm. The Mac download runs natively on both kinds of Mac. The release page includes the source code and checksums for these exact files. [Hello Needle 1.1.0 release](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.1.0)
 
 ### Install on FreeBSD
 
-Download `helloneedle-1.0.0.pkg`. Open a terminal in the folder containing the download and run this command as **root**. The `./` tells `pkg` to install that file. It will fetch any missing dependencies from your configured FreeBSD repositories.
+There are separate amd64 packages for **FreeBSD 14.x** and **FreeBSD 15.x**. Run `freebsd-version -u` to see which major version your computer uses. Download the matching package, open a terminal in that folder, and run the corresponding command as **root**. The `./` tells `pkg` to install the downloaded file. It will fetch missing dependencies from your configured FreeBSD repositories.
+
+For **FreeBSD 14.x**, use
 
 ```sh
-pkg install ./helloneedle-1.0.0.pkg
+pkg install ./helloneedle-1.1.0-FreeBSD-14-amd64.pkg
+```
+
+For **FreeBSD 15.x**, use
+
+```sh
+pkg install ./helloneedle-1.1.0-FreeBSD-15-amd64.pkg
 ```
 
 Back in your desktop account, open the application menu and search for **Hello Needle**, or run `helloneedle` in a terminal. To open a particular folder at startup, run `helloneedle "$HOME/Documents"`. To uninstall, run `pkg delete helloneedle` as root.
 
 ### Install on Ubuntu
 
-Download `helloneedle_1.0.0_amd64.deb`. In the folder containing it, run the following command. APT installs Hello Needle and the libraries and document readers it needs.
+Download `helloneedle_1.1.0_amd64.deb`. In the folder containing it, run the following command. APT installs Hello Needle and the libraries and document readers it needs.
 
 ```sh
-sudo apt install ./helloneedle_1.0.0_amd64.deb
+sudo apt install ./helloneedle_1.1.0_amd64.deb
 ```
 
 Open **Hello Needle** from the applications menu, or run `helloneedle` in a terminal. To uninstall, run `sudo apt remove helloneedle`. On both Ubuntu and FreeBSD, install a newer package the same way, using its new filename.
 
 ### Install on Windows
 
-1. Open `HelloNeedle-1.0.0-Windows-x64-Setup.exe`. Choose English or Spanish and follow Setup. It installs for your account and offers a desktop shortcut.
+1. Open `HelloNeedle-1.1.0-Windows-x64-Setup.exe`. Choose English or Spanish and follow Setup. It installs for your account and offers a desktop shortcut.
 2. Open **Start**, type **Hello Needle**, and select it. The installer includes everything needed to search PDFs and Word files.
 3. To update, close Hello Needle and run the newer installer. To uninstall, open **Settings → Apps**, find **Hello Needle** in the list, and select **Uninstall**.
 
@@ -49,7 +58,7 @@ Windows can display **Unknown publisher** because the installer has no Windows p
 
 ### Install on macOS
 
-1. Open `HelloNeedle-1.0.0-macOS-Universal.dmg` in Finder. Drag **Hello Needle** onto the **Applications** shortcut in the disk image.
+1. Open `HelloNeedle-1.1.0-macOS-Universal.dmg` in Finder. Drag **Hello Needle** onto the **Applications** shortcut in the disk image.
 2. Eject the disk image and open **Hello Needle** from **Applications**. The app includes its PDF and Word readers.
 3. To update, quit the app and replace it with the newer copy. To uninstall, move **Hello Needle** from Applications to the Trash.
 
@@ -65,14 +74,12 @@ In this FreeBSD screenshot from version 1.0.0, the search found `Needle` twice o
 
 ![Hello Needle on FreeBSD with the second occurrence of “Needle” highlighted on page 2 of a PDF](docs/screenshots/1.0.0/freebsd-pdf-search.png)
 
-### Changes since the 1.0.0 release
+### New in 1.1.0
 
-The downloads above install version 1.0.0. The following features are available when you build the current source. [Build instructions](#build-from-source)
-
-- **Search saved web pages with embedded pictures.** Choose **Document** beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The reader uses a 1 GiB memory budget per document. If it reaches that budget, it reports the file under **Details…** and continues searching. **Source** searches the original markup under its existing size limits.
+- **Search saved web pages with embedded pictures.** Choose **Document** in the **Search in** menu beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The size of the saved HTML file can exceed 1 GiB. The reader applies a 1 GiB memory budget to what it keeps for that document. If it reaches that budget, it reports the file under **Details…** and continues searching. **Source** searches the original markup under its existing size limits.
 - **Follow a search as it runs.** The left of the status bar shows documents scanned and matches found. A successfully searched document counts once, even if it contains no matches. If any files cause errors, the error count appears on the right beside **Details…**. Click the button for the filenames and reasons.
-- **Identify the selected result.** The preview heading gives the location followed by the filename, for example `Paragraph 12 - Meeting notes.docx`. A long heading can wrap onto a second line. Directly below it, **Open original** opens the file in its usual application. The buttons include labeled icons that follow the light or dark theme and come with the app on every platform.
-- **Visit TheCrumbs.org.** The centered link reads `Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org`. Hovering over it underlines the whole sentence and shows the hint `Open TheCrumbs.org in your browser`. Clicking anywhere on the text opens the site in your default browser.
+- **Identify the selected result.** The left-aligned preview heading gives the location followed by the filename, for example `Paragraph 12 - Meeting notes.docx`. A long heading can wrap onto a second line. The **Open original** button sits directly below the heading on the left and opens the file in its usual application. The buttons include labeled icons that follow the light or dark theme and come with the app on every platform.
+- **Visit TheCrumbs.org.** The centered link reads `Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org`. Hovering over it underlines the whole sentence and shows the hint `Open TheCrumbs.org in your browser`. Clicking anywhere on the text opens the site in your default browser. In a narrow window the link moves to its own row below the counters.
 
 ### Documents and previews
 
@@ -109,23 +116,23 @@ Choose **Language → Español** or **Language → English**. The choice is reme
 
 ## Verify a download
 
-Hello Needle uses GitHub’s immutable releases. Once a version is published, its files are locked. To check your download, run the following command in the folder where you saved it, using a recent version of the GitHub CLI. This example checks the FreeBSD package. For another system, substitute the name of the file you downloaded.
+Hello Needle uses GitHub’s immutable releases. Once a version is published, its files are locked. To check your download, run the following command in the folder where you saved it, using a recent version of the GitHub CLI. This example checks the FreeBSD 15.x package. For another system, substitute the name of the file you downloaded.
 
 ```sh
-gh release verify-asset v1.0.0 helloneedle-1.0.0.pkg --repo AlfredoLlaquet/helloneedle
+gh release verify-asset v1.1.0 helloneedle-1.1.0-FreeBSD-15-amd64.pkg --repo AlfredoLlaquet/helloneedle
 ```
 
-For a checksum check on FreeBSD, run `sha256 -q helloneedle-1.0.0.pkg` and compare the result with the line for that filename in the [1.0.0 checksum list](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.0.0/SHA256SUMS). GitHub also signed the original build records for the Windows installer and Mac disk image. [Windows build record](https://github.com/AlfredoLlaquet/helloneedle/attestations/71362854) · [Mac build record](https://github.com/AlfredoLlaquet/helloneedle/attestations/71361503)
+For a checksum check on FreeBSD, run `sha256 -q helloneedle-1.1.0-FreeBSD-15-amd64.pkg` for the 15.x download and compare the result with the line for that filename in the release checksum list. The Windows and macOS installers also have individual signed build records. [1.1.0 checksum list](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/SHA256SUMS) · [Windows build record](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-Windows-x64.sigstore.json) · [Mac build record](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-macOS-Universal.sigstore.json)
 
 ## Build from source
 
-These instructions build the current source. Pick your system below. To build the exact 1.0.0 release, download the [1.0.0 source archive with its Rust libraries](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.0.0/helloneedle-1.0.0-source-f357c30da0a5212f232ee32078d56d90ce67b3d1.tar.gz), extract it, and open a terminal in the extracted folder. Then skip the `git clone` and `cd helloneedle` lines.
+The recipes below build the current source from Git. To build the exact 1.1.0 release with its bundled Rust libraries, open **Assets** on the release page and download the archive whose name begins with `helloneedle-1.1.0-source-` and ends in `.tar.gz`. Extract it, open a terminal in the extracted folder, and skip the `git clone` and `cd helloneedle` lines. [Hello Needle 1.1.0 release files](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.1.0)
 
-[FreeBSD](#build-and-run-on-freebsd) · [Ubuntu](#build-and-run-on-ubuntu) · [Windows](#build-and-run-on-windows) · [macOS](#build-and-run-on-macos)
+[FreeBSD 14.x and 15.x](#build-and-run-on-freebsd-14x-and-15x) · [Ubuntu](#build-and-run-on-ubuntu) · [Windows](#build-and-run-on-windows) · [macOS](#build-and-run-on-macos)
 
-### Build and run on FreeBSD
+### Build and run on FreeBSD 14.x and 15.x
 
-On FreeBSD 15.1, install the compiler tools, Qt, and the PDF and Word readers as **root**. The C++ compiler comes with the base system.
+Both FreeBSD amd64 packages use the same dependencies and build commands. On FreeBSD 14.x or 15.x, install the compiler tools, Qt, and the PDF and Word readers as **root**. The C++ compiler comes with the base system.
 
 ```sh
 pkg install git cmake ninja rust python3 qt6-base qt6-svg qt6-translations poppler-utils antiword

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Verify the four native packages, installer attestations and matching sources."""
+"""Verify all native packages, installer attestations and matching sources."""
 import argparse
 import json
 from pathlib import Path
@@ -71,7 +71,7 @@ def gather(repo, run_id, revision, version, out):
     if absent:
         raise ValueError(f'Missing attested assets: {sorted(absent)}')
     add_packages(repo, run_id, revision, version, out)
-    # The release workflow signs this complete four-platform list.
+    # The release workflow signs the complete list, including each FreeBSD ABI.
     sums = ''.join(f'{digest(p)}  {p.name}\n' for p in sorted(out.iterdir()))
     (out / 'SHA256SUMS').write_text(sums, encoding='ascii')
 

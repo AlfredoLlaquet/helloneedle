@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import time
 
-from native_packages import digest
+from native_packages import digest, package_targets
 
 
 def gh(*args):
@@ -76,7 +76,23 @@ class Release:
             if name not in local or local[name] != value.get('digest'):
                 raise ValueError(f'Existing release asset differs from tested bytes: {name}')
         if record and not record['draft'] and (set(local) | {self.receipt.name}) != set(assets):
-            raise ValueError('Published release contents differ from the complete four-platform set')
+            raise ValueError('Published release contents differ from the complete set of verified assets')
+
+    def release_notes(self):
+        template = (Path(__file__).parent / 'notes.md').read_text()
+        rows = []
+        for target in package_targets(self.version):
+            if target.freebsd_release:
+                label = (target.freebsd_release if self.version == '1.0.0'
+                         else target.freebsd_release.split('.')[0] + '.x')
+                url = f'https://github.com/{self.repo}/releases/download/{self.tag}/{target.filename}'
+                rows.append(f'| FreeBSD {label} amd64 | [FreeBSD {label} package]({url}) | '
+                            f'Run `pkg install ./{target.filename}` as root. |')
+        # Release-specific paragraphs carry their version in the visible heading.
+        paragraphs = (p for p in template.split('\n\n') if not p.startswith('**New in ')
+                      or p.startswith(f'**New in {self.version}.**'))
+        return ('\n\n'.join(paragraphs).replace('@FREEBSD_DOWNLOADS@', '\n'.join(rows))
+                .replace('@VERSION@', self.version).replace('@REPOSITORY@', self.repo))
 
     def verify_receipt(self, receipt, *, new=False):
         flags = ['attestation', 'verify', str(self.sums), '--repo', self.repo, '--bundle', str(receipt),
@@ -125,7 +141,7 @@ class Release:
         subprocess.run(['sha256sum', '-c', self.sums.name], cwd=self.dist, check=True)
         record, assets = self.state()
         self.check_existing(record, assets)
-        notes = (Path(__file__).parent / 'notes.md').read_text().replace('@VERSION@', self.version).replace('@REPOSITORY@', self.repo)
+        notes = self.release_notes()
         with tempfile.TemporaryDirectory() as temp:
             notes_path = Path(temp) / 'notes.md'
             notes_path.write_text(notes, encoding='utf-8')
@@ -153,7 +169,7 @@ class Release:
             if {n: a['digest'] for n, a in assets.items()} != local:
                 raise ValueError('Remote release assets differ from the verified local bytes')
             if record['draft'] and (record.get('body') or '').splitlines() != notes.splitlines():
-                raise ValueError('Draft release notes differ from the four-platform instructions')
+                raise ValueError('Draft release notes differ from the package instructions')
             if record['draft'] and self.publish:
                 gh('release', 'edit', self.tag, '--draft=false', '--latest')
         record, assets = self.state()
@@ -172,8 +188,9 @@ class Release:
                 time.sleep(delay)
             else:
                 subprocess.run(['gh', 'release', 'verify', self.tag], check=True)
-            for name in (f'HelloNeedle-{self.version}-Windows-x64-Setup.exe', f'HelloNeedle-{self.version}-macOS-Universal.dmg',
-                         f'helloneedle-{self.version}.pkg', f'helloneedle_{self.version}_amd64.deb'):
+            installers = [f'HelloNeedle-{self.version}-Windows-x64-Setup.exe',
+                          f'HelloNeedle-{self.version}-macOS-Universal.dmg']
+            for name in installers + [target.filename for target in package_targets(self.version)]:
                 subprocess.run(['gh', 'release', 'verify-asset', self.tag, self.dist / name], check=True)
 
 

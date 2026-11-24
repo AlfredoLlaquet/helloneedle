@@ -237,16 +237,16 @@ jobs:
           if-no-files-found: ignore
 
   macos-arm:
-    name: macOS 26 Apple Silicon, native Cocoa and installer
+    name: macOS 15 Apple Silicon, native Cocoa and installer
     needs: source
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 100
     outputs:
       native_installer: ${{ steps.publish_native.outcome }}
     env:
       QT_QPA_PLATFORM: cocoa
       MAC_CPU: arm64
-      MAC_TARGET: macos-26-arm64
+      MAC_TARGET: macos-15-arm64
       PRODUCT_VERSION: ${{ needs.source.outputs.version }}
     steps: *mac_build_steps
 
@@ -312,7 +312,7 @@ jobs:
     name: Install and open the Universal disk image on a clean Apple Silicon Mac
     needs: [source, macos-intel]
     if: ${{ !cancelled() && needs.macos-intel.outputs.universal_installer == 'success' }}
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 25
     env:
       PRODUCT_VERSION: ${{ needs.source.outputs.version }}
@@ -322,19 +322,26 @@ jobs:
     steps: *mac_clean_steps
 
   freebsd:
-    name: FreeBSD 15.1 amd64, pkg and native X11
+    name: FreeBSD ${{ matrix.release }} amd64, pkg and native X11
     needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Build each major ABI on its oldest currently supported minor release.
+        release: ['14.4', '15.1']
+    env:
+      HN_FREEBSD_RELEASE: ${{ matrix.release }}
     steps:
       - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
         with:
-          release: '15.1'
+          release: ${{ matrix.release }}
           arch: x86_64
           mem: '8192'
           sync: rsync
           copyback: 'true'
-          envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA CARGO_BUILD_JOBS'
+          envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA CARGO_BUILD_JOBS HN_FREEBSD_RELEASE'
           prepare: |
             set -eu
             pkg install -y git cmake ninja rust qt6-base qt6-svg qt6-translations poppler-utils antiword python3 \
@@ -342,6 +349,8 @@ jobs:
             dbus-uuidgen --ensure
           run: |
             set -eu
+            test "$(freebsd-version -u | cut -d- -f1)" = "$HN_FREEBSD_RELEASE"
+            test "$(pkg config ABI)" = "FreeBSD:${HN_FREEBSD_RELEASE%%.*}:amd64"
             resultdir=$PWD
             pw useradd -n hnbuild -m -s /bin/sh
             cd /home/hnbuild
@@ -369,15 +378,56 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: gui-evidence-freebsd-15.1-amd64-x11
+          name: gui-evidence-freebsd-${{ matrix.release }}-amd64-x11
           path: native-out/evidence/
           if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
         with:
-          name: helloneedle-freebsd-15.1-amd64
+          name: helloneedle-freebsd-${{ matrix.release }}-amd64
           path: native-out/packages/
           if-no-files-found: error
+
+  freebsd14-install:
+    name: Install the FreeBSD 14.x package on FreeBSD 14.5 amd64
+    needs: freebsd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: helloneedle-freebsd-14.4-amd64
+          path: native-out/packages
+      - name: Verify the package from the 14.4 build
+        working-directory: native-out/packages
+        run: sha256sum -c SHA256SUMS
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: '14.5'
+          arch: x86_64
+          sync: rsync
+          copyback: 'false'
+          prepare: |
+            set -eu
+            pkg install -y python3 xorg-vfbserver openbox dbus dejavu
+            dbus-uuidgen --ensure
+          run: |
+            set -eu
+            test "$(freebsd-version -u | cut -d- -f1)" = '14.5'
+            test "$(pkg config ABI)" = 'FreeBSD:14:amd64'
+            pkg install -y "$PWD"/native-out/packages/*-FreeBSD-14-amd64.pkg
+            version=$(pkg query '%v' helloneedle)
+            test "$(/usr/local/bin/helloneedle-worker --version)" = "helloneedle-worker $version"
+            pw useradd -n hntest -m -s /bin/sh
+            cp -R tests/desktop /home/hntest/desktop
+            cp packaging/x11-tests.sh /home/hntest/x11-tests.sh
+            su hntest -c 'set -eu
+              cd /home/hntest
+              sh x11-tests.sh /usr/local/bin/helloneedle --smoke-test
+              python3 desktop/worker_suite.py --worker /usr/local/bin/helloneedle-worker --require-doc'
 
   windows:
     name: Build Windows x64 with UCRT64

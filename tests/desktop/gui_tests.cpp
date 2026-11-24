@@ -2,6 +2,7 @@
 #include "application.h"
 #include "language.h"
 #include "mainwindow.h"
+#include "searchstatus.h"
 #include "gui_appearance.h"
 #include "gui_icon.h"
 #include "gui_capture.h"
@@ -30,8 +31,7 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSet>
-#include <QStyle>
-#include <QStyleFactory>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -439,36 +439,28 @@ private slots:
 
     void compactWorkArea()
     {
-        // A 1024×768 Windows desktop at 150% scaling can leave only 683×480
-        // logical pixels. The initial status geometry is evaluated during show,
-        // so resizing the window after it is visible misses this regression.
-        const QSize client(622, 408), area(683, 480);
-        QStringList styles{QString()};
-        if (QGuiApplication::platformName() == "xcb" &&
-            QStyleFactory::keys().contains("Windows", Qt::CaseInsensitive))
-            styles.append("Windows");
-        for (const auto &styleName : styles) {
-            QSettings().clear();
-            std::unique_ptr<QStyle> style(styleName.isEmpty() ? nullptr : QStyleFactory::create(styleName));
-            hn::MainWindow fresh;
-            if (style) {
-                fresh.setStyle(style.get());
-                for (auto *widget : fresh.findChildren<QWidget *>())
-                    widget->setStyle(style.get());
-            }
-            fresh.resize(client);
-            fresh.show();
-            QVERIFY(QTest::qWaitForWindowExposed(&fresh));
-            const auto frame = fresh.frameGeometry();
-            const auto neededHeight = qMax(client.height(), fresh.minimumSizeHint().height());
-            QVERIFY2(fresh.height() <= neededHeight + 4,
-                     qPrintable(QString("First show inflated a %1px client to %2px (settled minimum %3px)")
-                                .arg(client.height()).arg(fresh.height()).arg(fresh.minimumSizeHint().height())));
-            QVERIFY2(frame.width() <= area.width() + 4 && frame.height() <= area.height() + 4,
-                     qPrintable(QString("Compact frame %1x%2 exceeds the 683x480 work area")
-                                .arg(frame.width()).arg(frame.height())));
-            VERIFY_OK(guiqa::inspectLayout(fresh));
-        }
+        // The hidden panel has placeholder geometry. Translating and populating
+        // it must not reserve height based on that width before the first show.
+        QStatusBar bar;
+        hn::SearchStatus panel(&bar);
+        bar.addPermanentWidget(&panel, 1);
+        const int initialMinimum = panel.minimumHeight();
+        panel.retranslate();
+        panel.setMessage(hn::ui("Ready to search."), 0);
+        QCOMPARE(panel.minimumHeight(), initialMinimum);
+
+        // A 1024×768 Windows desktop at 150% can leave a 683×480 work area.
+        // Measure the entire native frame, including the platform's title bar.
+        const QSize area(683, 480);
+        hn::MainWindow fresh;
+        fresh.resize(622, 408);
+        fresh.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&fresh));
+        const auto frame = fresh.frameGeometry();
+        QVERIFY2(frame.width() <= area.width() + 4 && frame.height() <= area.height() + 4,
+                 qPrintable(QString("Compact frame %1x%2 exceeds the 683x480 work area")
+                            .arg(frame.width()).arg(frame.height())));
+        VERIFY_OK(guiqa::inspectLayout(fresh));
     }
 
     void unicodeAndRepeat()

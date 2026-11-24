@@ -193,7 +193,9 @@ def freebsd(stage, dist, work, version):
     spec = work / "freebsd-manifest.json"
     spec.write_text(json.dumps(manifest), encoding="utf-8")
     run(["pkg", "create", "-M", spec, "-r", stage, "-o", dist])
-    return dist / f"helloneedle-{version}.pkg"
+    package = dist / f"helloneedle-{version}.pkg"
+    target = manifest["abi"].replace(":", "-")
+    return package.rename(dist / f"helloneedle-{version}-{target}.pkg")
 
 
 def build(args):

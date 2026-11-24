@@ -2,7 +2,7 @@ Hello Needle for Windows
 
 Windows installer
 
-Double-click HelloNeedle-1.0.0-Windows-x64-Setup.exe. Setup installs Hello
+Double-click HelloNeedle-1.1.0-Windows-x64-Setup.exe. Setup installs Hello
 Needle for the current account under %LOCALAPPDATA%\Programs\Hello Needle.
 Choose English or Spanish during setup. A desktop shortcut is optional.
 The installer includes Qt, its Spanish translation, Poppler and Antiword.

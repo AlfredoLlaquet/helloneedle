@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish the verified four-platform draft to GitHub Releases
+        description: Publish the verified installers and packages to GitHub Releases
         type: boolean
         default: false
 
@@ -41,7 +41,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify four native packages, their tested source revision and matching dependencies
+      - name: Verify native packages for every target, their tested source revision and matching dependencies
         run: |
           python3 packaging/release/prepare.py --repo "$GH_REPO" --run "$BUILD_RUN" \
             --workflow-revision "$GITHUB_SHA" --github-env "$GITHUB_ENV" --out dist

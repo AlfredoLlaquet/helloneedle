@@ -9,14 +9,18 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import native_packages
 import publish
 
 
 class ReleaseTransaction(unittest.TestCase):
+    version = '1.0.0'
+    packages = ('helloneedle-1.0.0.pkg', 'helloneedle_1.0.0_amd64.deb')
+
     def setUp(self):
         work = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(chdir(work))
-        self.enterContext(patch.dict(os.environ, {'GH_REPO': 'example/test', 'DEFAULT_BRANCH': 'main', 'VERSION': '1.0.0',
+        self.enterContext(patch.dict(os.environ, {'GH_REPO': 'example/test', 'DEFAULT_BRANCH': 'main', 'VERSION': self.version,
             'SOURCE_REVISION': 'a' * 40, 'GITHUB_SHA': 'b' * 40, 'PUBLISH': 'false', 'GITHUB_OUTPUT': str(Path(work) / 'output'),
             'CHECKSUM_BUNDLE': ''}))
         self.flow = publish.Release()
@@ -28,11 +32,13 @@ class ReleaseTransaction(unittest.TestCase):
         self.target = self.flow.source
         self.tag = None
         self.operations = []
-        for name in ('program.exe', 'program.dmg', 'helloneedle-1.0.0.pkg', 'helloneedle_1.0.0_amd64.deb'):
+        self.installers = (f'HelloNeedle-{self.version}-Windows-x64-Setup.exe',
+                           f'HelloNeedle-{self.version}-macOS-Universal.dmg')
+        for name in self.installers + self.packages:
             (self.flow.dist / name).write_bytes(name.encode())
         self.flow.sums.write_text(''.join(f'{publish.digest(p)}  {p.name}\n' for p in self.flow.dist.iterdir()))
-        self.assets['program.exe'] = b'program.exe'
-        self.assets['program.dmg'] = b'program.dmg'
+        for name in self.installers:
+            self.assets[name] = name.encode()
         self.assets['SHA256SUMS'] = b'previous two-platform checksum list'
         self.assets[self.flow.receipt.name] = b'previous two-platform receipt'
         self.enterContext(patch.object(publish, 'pages', side_effect=self.pages))
@@ -55,7 +61,7 @@ class ReleaseTransaction(unittest.TestCase):
     def git(self, cmd, **_):
         if cmd[:2] != ['git', 'ls-remote']:
             raise AssertionError(cmd)
-        return f'{self.tag}\trefs/tags/v1.0.0\n' if self.tag else ''
+        return f'{self.tag}\trefs/tags/{self.flow.tag}\n' if self.tag else ''
 
     def pages(self, url):
         if '/assets' in url:
@@ -94,8 +100,9 @@ class ReleaseTransaction(unittest.TestCase):
             self.flow.finish()
         self.assertTrue(self.draft)
         self.assertEqual({item for kind, item in self.operations if kind == 'replace'}, {'SHA256SUMS', self.flow.receipt.name})
-        self.assertEqual({item for kind, item in self.operations if kind == 'add'}, {'helloneedle-1.0.0.pkg', 'helloneedle_1.0.0_amd64.deb'})
-        self.assertIn('FreeBSD 15.1', self.body)
+        self.assertEqual({item for kind, item in self.operations if kind == 'add'}, set(self.packages))
+        for name in self.packages:
+            self.assertIn(f'/releases/download/{self.flow.tag}/{name})', self.body)
         self.flow.receipt.unlink()
         self.operations.clear()
         self.flow.plan()
@@ -103,7 +110,8 @@ class ReleaseTransaction(unittest.TestCase):
         self.flow.publish = True
         self.flow.finish()
         self.assertEqual([k for k, _ in self.operations if k != 'immutable'], ['publish'])
-        self.assertEqual(len([k for k, _ in self.operations if k == 'immutable']), 4)
+        self.assertEqual({item for kind, item in self.operations if kind == 'immutable'},
+                         set(self.installers + self.packages))
         self.operations.clear()
         self.flow.plan()
         self.flow.finish()
@@ -130,9 +138,54 @@ class ReleaseTransaction(unittest.TestCase):
         self.target = 'd' * 40
         with self.assertRaisesRegex(ValueError, 'another source'): self.flow.plan()
         self.target = self.flow.source
-        self.assets['program.exe'] = b'other bytes'
+        self.assets[self.installers[0]] = b'other bytes'
         with self.assertRaisesRegex(ValueError, 'differs'): self.flow.plan()
         self.assertEqual(self.operations, [])
+
+
+class FivePackageTransaction(ReleaseTransaction):
+    version = '1.1.0'
+    packages = ('helloneedle-1.1.0-FreeBSD-14-amd64.pkg', 'helloneedle-1.1.0-FreeBSD-15-amd64.pkg',
+                'helloneedle_1.1.0_amd64.deb')
+
+
+class FreeBSDTargets(unittest.TestCase):
+    def test_build_receipt_and_both_pkg_manifests_match_the_target(self):
+        version = '1.1.0'
+        targets = [t for t in native_packages.package_targets(version) if t.freebsd_release]
+        self.assertEqual({t.freebsd_release for t in targets}, {'14.4', '15.1'})
+        deps = {name: {'origin': origin, 'version': '1'} for name, origin in (
+            ('qt6-base', 'devel/qt6-base'), ('qt6-svg', 'graphics/qt6-svg'),
+            ('qt6-translations', 'devel/qt6-translations'), ('poppler-utils', 'graphics/poppler-utils'),
+            ('antiword', 'textproc/antiword'))}
+        files = {'usr/local/bin/helloneedle': 'digest'}
+        for target in targets:
+            release = target.freebsd_release
+            major = release.split('.')[0]
+            with self.subTest(release=release):
+                self.assertEqual(target.filename, f'helloneedle-{version}-FreeBSD-{major}-amd64.pkg')
+                self.assertIn(f'FreeBSD {release} amd64, pkg and native X11', target.jobs)
+                if major == '14':
+                    self.assertIn('Install the FreeBSD 14.x package on FreeBSD 14.5 amd64', target.jobs)
+                manifest = {'name': 'helloneedle', 'origin': 'deskutils/helloneedle', 'prefix': '/usr/local',
+                            'version': version, 'abi': f'FreeBSD:{major}:amd64', 'arch': f'freebsd:{major}:x86:64',
+                            'deps': deps}
+                records = {'+COMPACT_MANIFEST': manifest.copy(),
+                           '+MANIFEST': dict(manifest, files={'/' + path: digest for path, digest in files.items()})}
+                receipt = {'machine': 'amd64', 'operating_system': f'{release}-RELEASE\n{release}-RELEASE-p2',
+                           'managed_packages': [name + ' 1' for name in deps],
+                           'runtime_linkage': {'helloneedle': 'libQt6Svg.so.6'}}
+                native_packages.validate_freebsd(records, receipt, files, version, release)
+                other = '15.1' if major == '14' else '14.4'
+                with self.assertRaisesRegex(ValueError, 'ABI'):
+                    native_packages.validate_freebsd(records, receipt, files, version, other)
+                for metadata in records.values():
+                    with patch.dict(metadata, abi=f'FreeBSD:{other.split(".")[0]}:amd64'):
+                        with self.assertRaisesRegex(ValueError, 'ABI'):
+                            native_packages.validate_freebsd(records, receipt, files, version, release)
+                with patch.dict(receipt, operating_system=f'{release}-RELEASE\n{other}-RELEASE'):
+                    with self.assertRaisesRegex(ValueError, 'build or package manifests'):
+                        native_packages.validate_freebsd(records, receipt, files, version, release)
 
 
 if __name__ == '__main__':

@@ -1,8 +1,10 @@
 Hello Needle @VERSION@ finds words and phrases in local documents, including searchable PDF, Microsoft Office and OpenDocument files. Its Qt 6 interface is available in English and Spanish.
 
+**New in 1.1.0.** In Document mode, Hello Needle skips embedded pictures as it reads saved HTML pages. Captions and image descriptions stay searchable. The status bar counts scanned documents and matches, places the error count beside **Details**, and includes a centered link to Alfredo Llaquet-Alsina’s Crumbs. The **Search in** selector sits beside **Options**. A selected result shows its location and filename above **Open original**. The buttons use icons included with the application. FreeBSD users can download a package for their 14.x or 15.x system.
+
 | Desktop | Download | Installation |
 | --- | --- | --- |
-| FreeBSD 15.1 amd64 | [FreeBSD package](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/helloneedle-@VERSION@.pkg) | Run `pkg install ./helloneedle-@VERSION@.pkg` as root. |
+@FREEBSD_DOWNLOADS@
 | Ubuntu 24.04 amd64 | [Debian package](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/helloneedle_@VERSION@_amd64.deb) | Run `sudo apt install ./helloneedle_@VERSION@_amd64.deb`. |
 | Windows x64 | [Hello Needle Setup](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/HelloNeedle-@VERSION@-Windows-x64-Setup.exe) | Run Setup and open Hello Needle from Start. |
 | macOS on Intel or Apple Silicon | [Universal disk image](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/HelloNeedle-@VERSION@-macOS-Universal.dmg) | Open the disk image and drag Hello Needle to Applications. |
