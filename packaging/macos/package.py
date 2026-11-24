@@ -31,16 +31,28 @@ def disk(app, dest, arch):
     version = metadata(app)["CFBundleShortVersionString"]
     dest.mkdir(parents=True, exist_ok=True)
     image = dest / f"HelloNeedle-{version}-macOS-{arch}.dmg"
-    with tempfile.TemporaryDirectory(prefix="Hello Needle disk ") as tmp:
-        payload = Path(tmp) / "disk"
+    with tempfile.TemporaryDirectory(prefix=".helloneedle-disk-", dir=dest) as tmp:
+        payload = Path(tmp) / "Hello Needle"
+        candidate = Path(tmp) / image.name
         payload.mkdir()
         run("ditto", app, payload / NAME)
         (payload / "Applications").symlink_to("/Applications")
         shutil.copy2(ROOT / "LICENSE", payload / "LICENSE")
         shutil.copy2(HERE.parent / "MACOS.txt", payload / "Read Me.txt")
-        run("hdiutil", "create", "-quiet", "-ov", "-fs", "HFS+", "-format", "UDZO",
-            "-volname", "Hello Needle", "-srcfolder", payload, image)
-    run("hdiutil", "verify", image)
+        if int(platform.mac_ver()[0].split(".")[0]) >= 27:
+            # Golden Gate replaces hdiutil's create -srcfolder with diskutil image.
+            try:
+                run("diskutil", "image", "create", "from", "--format", "UDZO",
+                    "--volumeName", "Hello Needle", payload, candidate)
+            except subprocess.CalledProcessError:
+                print("Retrying disk image creation with an APFS volume.", flush=True)
+                run("hdiutil", "create", "-ov", "-fs", "APFS", "-format", "UDZO",
+                    "-volname", "Hello Needle", "-srcfolder", payload, candidate)
+        else:
+            run("hdiutil", "create", "-ov", "-fs", "HFS+", "-format", "UDZO",
+                "-volname", "Hello Needle", "-srcfolder", payload, candidate)
+        run("hdiutil", "verify", candidate)
+        candidate.replace(image)
     return image
 
 

@@ -132,7 +132,9 @@ namespace HelloNeedleInstaller {
         do {
             if (-not $gui) {
                 foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('helloneedle')) {
-                    if (-not $gui -and (Same-Path $candidate.MainModule.FileName $DesktopExecutable)) {
+                    # Windows can enumerate a new GUI process before its executable module is ready.
+                    $module = $candidate.MainModule
+                    if (-not $gui -and $module -and (Same-Path $module.FileName $DesktopExecutable)) {
                         $gui = $candidate
                         # An enumerated Process does not retain a kernel handle until
                         # requested. Once the PID disappears its ExitCode can be null.
@@ -167,7 +169,8 @@ namespace HelloNeedleInstaller {
         # ShellExecute may return its broker instead of the executable. Only wait
         # for the verified installed launcher, which explicitly returns the GUI status.
         foreach ($candidate in [Diagnostics.Process]::GetProcessesByName('Hello Needle')) {
-            if (-not $launcherProcess -and (Same-Path $candidate.MainModule.FileName $launcherPath)) {
+            $module = $candidate.MainModule
+            if (-not $launcherProcess -and $module -and (Same-Path $module.FileName $launcherPath)) {
                 $launcherProcess = $candidate
                 $launcherHandle = $launcherProcess.SafeHandle
                 $report.launcherPid = $launcherProcess.Id
