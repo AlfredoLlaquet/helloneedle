@@ -22,7 +22,9 @@ The Windows x64 installer also runs on Windows 11 on Arm. The Mac download runs 
 
 ### Install on FreeBSD
 
-There are separate amd64 packages for **FreeBSD 14.x** and **FreeBSD 15.x**. Run `freebsd-version -u` to see which major version your computer uses. Download the matching package, open a terminal in that folder, and run the corresponding command as **root**. The `./` tells `pkg` to install the downloaded file. It will fetch missing dependencies from your configured FreeBSD repositories.
+There are separate amd64 packages for **FreeBSD 14.x** and **FreeBSD 15.x**. Run `freebsd-version -u` to see which major version your computer uses. The 14.x package was built on 14.4 and tested on both 14.4 and 14.5. The 15.x package was built and tested on 15.1.
+
+Download the matching package, open a terminal in that folder, and run the corresponding command as **root**. The `./` tells `pkg` to install the downloaded file. It will fetch missing dependencies from your configured FreeBSD repositories.
 
 For **FreeBSD 14.x**, use
 
@@ -70,9 +72,9 @@ The app has an ad hoc signature and has not been notarized by Apple. If macOS bl
 2. Type a word or phrase in **Find** and press **Enter**. Hello Needle lists the files containing it. Expand a filename to see each occurrence.
 3. Select an occurrence to read it in the preview. **Open original** opens the file in its usual application. Searching and previewing leave your documents untouched.
 
-In this FreeBSD screenshot from version 1.0.0, the search found `Needle` twice on page 2 of `report.pdf`. The second result is selected, so the preview highlights the second occurrence. **Show text** displays the words as selectable text. **Show page** returns to the printed page.
+Hello Needle 1.1.0 on FreeBSD found 15 matches across 13 scanned documents. In the screenshot, the second result for `report.pdf` is selected, so the preview highlights the second occurrence of `Needle` on page 2. **Show text** displays the words as selectable text. **Show page** returns to the printed page.
 
-![Hello Needle on FreeBSD with the second occurrence of “Needle” highlighted on page 2 of a PDF](docs/screenshots/1.0.0/freebsd-pdf-search.png)
+![Hello Needle on FreeBSD with the second occurrence of “Needle” highlighted on page 2 of a PDF](docs/screenshots/1.1.0/freebsd-pdf-search.png)
 
 ### New in 1.1.0
 
@@ -126,7 +128,7 @@ For a checksum check on FreeBSD, run `sha256 -q helloneedle-1.1.0-FreeBSD-15-amd
 
 ## Build from source
 
-The recipes below build the current source from Git. To build the exact 1.1.0 release with its bundled Rust libraries, open **Assets** on the release page and download the archive whose name begins with `helloneedle-1.1.0-source-` and ends in `.tar.gz`. Extract it, open a terminal in the extracted folder, and skip the `git clone` and `cd helloneedle` lines. [Hello Needle 1.1.0 release files](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.1.0)
+The recipes below build the current source from Git. To build the exact 1.1.0 release with its bundled Rust libraries, download and extract the release source archive. Open a terminal in the extracted folder and skip the `git clone` and `cd helloneedle` lines. [Download the 1.1.0 source archive](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle-1.1.0-source-ab2355d90cb9d917536636387abf58acafc6eadc.tar.gz)
 
 [FreeBSD 14.x and 15.x](#build-and-run-on-freebsd-14x-and-15x) · [Ubuntu](#build-and-run-on-ubuntu) · [Windows](#build-and-run-on-windows) · [macOS](#build-and-run-on-macos)
 
