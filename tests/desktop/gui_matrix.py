@@ -22,7 +22,8 @@ FULL = [
     "markupModes", "pdfNavigation", "optionsAndCancellation", "languageMenu", "helpAndCredits",
     "statusBarLink", "scannedDocumentsAndErrors",
 ]
-SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "statusBarLink", "scannedDocumentsAndErrors"]
+SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "statusBarLink",
+          "scannedDocumentsAndErrors", "compactWorkArea"]
 
 
 def native_plugin():

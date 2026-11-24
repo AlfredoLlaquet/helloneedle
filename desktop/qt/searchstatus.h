@@ -16,6 +16,7 @@ public:
     void setMessage(const QString &text, int errors);
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 private:
     void arrange();
     QStatusBar *bar;

@@ -139,8 +139,18 @@ void SearchStatus::resizeEvent(QResizeEvent *event)
     arrange();
 }
 
+void SearchStatus::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    arrange();
+}
+
 void SearchStatus::arrange()
 {
+    // Before the first show, the status bar's children can still have Qt's
+    // placeholder geometry. Measuring wrapped text at that width can make
+    // the native window grow before the actual layout has even been applied.
+    if (!isVisible()) return;
     // QStatusBar may reserve a platform-specific amount of space for its size
     // grip. Balance the two margins so the text centers on the window itself.
     const int leftInset = mapTo(bar, QPoint()).x();
