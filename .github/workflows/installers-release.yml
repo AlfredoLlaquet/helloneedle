@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       build_run:
-        description: Native build run ID for this revision
+        description: Successful native build on the default branch or one of its ancestors
         required: true
         type: string
       publish:
-        description: Publish the verified draft to GitHub Releases
+        description: Publish the verified four-platform draft to GitHub Releases
         type: boolean
         default: false
 
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   release:
-    if: github.ref_name == github.event.repository.default_branch
+    if: github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -33,25 +33,28 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       BUILD_RUN: ${{ inputs.build_run }}
       PUBLISH: ${{ inputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Verify installers and corresponding sources from the selected build
+      - name: Verify four native packages, their tested source revision and matching dependencies
         run: |
-          set -eu
-          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("bridge/Cargo.toml").read_text())["package"]["version"])')
-          echo "VERSION=$version" >> "$GITHUB_ENV"
           python3 packaging/release/prepare.py --repo "$GH_REPO" --run "$BUILD_RUN" \
-            --revision "$GITHUB_SHA" --version "$version" --out dist
+            --workflow-revision "$GITHUB_SHA" --github-env "$GITHUB_ENV" --out dist
+      - id: existing
+        name: Verify the release target and reuse an existing matching receipt
+        run: python3 packaging/release/publish.py plan
       - name: Sign the complete release checksum list with GitHub's build identity
         id: attest
+        if: steps.existing.outputs.sign == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/SHA256SUMS
-      - name: Verify the receipt, upload every asset and check the draft on GitHub
+      - name: Verify the receipt, stage missing assets and confirm the remote release
         env:
           CHECKSUM_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: bash packaging/release/publish.sh

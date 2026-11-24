@@ -1,37 +1,24 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Check the two installers, their GitHub provenance, and every corresponding-source file."""
+"""Verify the four native packages, installer attestations and matching sources."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
+
+from native_packages import add_packages, checksums, digest
 
 
 def run(*args):
     subprocess.run(args, check=True)
 
 
-def digest(path):
-    with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
-
-
 def download(repo, run_id, name, dest):
     run('gh', 'run', 'download', str(run_id), '--repo', repo, '--name', name, '--dir', str(dest))
-
-
-def checksums(path):
-    result = {}
-    for line in path.read_text(encoding='ascii').splitlines():
-        match = re.fullmatch(r'([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9_.+-]*)', line)
-        if not match or match[2] in result:
-            raise ValueError(f'Invalid checksum entry in {path.name}: {line}')
-        result[match[2]] = match[1]
-    return result
 
 
 def gather(repo, run_id, revision, version, out):
@@ -83,7 +70,8 @@ def gather(repo, run_id, revision, version, out):
     absent = set(expected) - {p.name for p in out.iterdir()}
     if absent:
         raise ValueError(f'Missing attested assets: {sorted(absent)}')
-    # Include both installers, source parts, detached proofs and their signed manifests.
+    add_packages(repo, run_id, revision, version, out)
+    # The release workflow signs this complete four-platform list.
     sums = ''.join(f'{digest(p)}  {p.name}\n' for p in sorted(out.iterdir()))
     (out / 'SHA256SUMS').write_text(sums, encoding='ascii')
 
@@ -92,13 +80,19 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', required=True)
     parser.add_argument('--run', type=int, required=True)
-    parser.add_argument('--revision', required=True)
-    parser.add_argument('--version', required=True)
+    parser.add_argument('--workflow-revision', required=True)
+    parser.add_argument('--github-env', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     reported = json.loads(subprocess.check_output(['gh', 'api', f'repos/{args.repo}/actions/runs/{args.run}']))
-    if (reported['head_sha'] != args.revision or reported['head_repository']['full_name'] != args.repo
-            or reported['event'] not in ('push', 'workflow_dispatch')
+    revision = reported['head_sha']
+    if (not re.fullmatch(r'[0-9a-f]{40}', revision) or reported['head_repository']['full_name'] != args.repo
+            or reported['event'] not in ('push', 'workflow_dispatch') or reported['conclusion'] != 'success'
             or reported['path'] != '.github/workflows/helloneedle.yml'):
-        raise SystemExit('The selected run must build this release revision in its own trusted native workflow.')
-    gather(args.repo, args.run, args.revision, args.version, args.out)
+        raise SystemExit('Select a successful native build from this repository.')
+    run('git', 'merge-base', '--is-ancestor', revision, args.workflow_revision)
+    manifest = subprocess.check_output(['git', 'show', revision + ':bridge/Cargo.toml'], text=True)
+    version = tomllib.loads(manifest)['package']['version']
+    gather(args.repo, args.run, revision, version, args.out)
+    with args.github_env.open('a', encoding='utf-8') as env:
+        print(f'SOURCE_REVISION={revision}', f'VERSION={version}', sep='\n', file=env)
