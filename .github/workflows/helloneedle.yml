@@ -109,6 +109,8 @@ jobs:
                 checksum=87b2e87ed7adc4aca947b42eb7ff991614cc0edfccb486237f2bbc75f28aae63 ;;
             26) installer=MacPorts-2.12.7-26-Tahoe.pkg
                 checksum=588f14ccd3c6199559a070a80e6cddd6871721a08cc434775bf54378fd667910 ;;
+            27) installer=MacPorts-2.12.7-27-GoldenGate.pkg
+                checksum=e81cc182808a7c94f72a2121c7c7cabc9f135b88b9a88d477635f0912826da7e ;;
             *) echo 'A MacPorts installer for this release is required.' >&2; exit 1 ;;
           esac
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/$installer" \
@@ -237,16 +239,16 @@ jobs:
           if-no-files-found: ignore
 
   macos-arm:
-    name: macOS 15 Apple Silicon, native Cocoa and installer
+    name: macOS 27 Apple Silicon, native Cocoa and installer
     needs: source
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 100
     outputs:
       native_installer: ${{ steps.publish_native.outcome }}
     env:
       QT_QPA_PLATFORM: cocoa
       MAC_CPU: arm64
-      MAC_TARGET: macos-15-arm64
+      MAC_TARGET: macos-27-arm64
       PRODUCT_VERSION: ${{ needs.source.outputs.version }}
     steps: *mac_build_steps
 
@@ -312,7 +314,7 @@ jobs:
     name: Install and open the Universal disk image on a clean Apple Silicon Mac
     needs: [source, macos-intel]
     if: ${{ !cancelled() && needs.macos-intel.outputs.universal_installer == 'success' }}
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 25
     env:
       PRODUCT_VERSION: ${{ needs.source.outputs.version }}

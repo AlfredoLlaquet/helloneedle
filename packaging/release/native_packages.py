@@ -197,6 +197,6 @@ def add_packages(repo, run_id, revision, version, dest):
                         shutil.copyfileobj(src, out)
             package, inventory = folder / filename, folder / 'CONTENTS.sha256'
             if checksums(folder / 'SHA256SUMS') != {filename: digest(package), inventory.name: digest(inventory)}:
-                raise ValueError(f'Package or payload inventory checksum differs: {name}')
+                raise ValueError(f'Package or payload inventory checksum differs: {target.artifact}')
             verify_payload(package, inventory, revision, version)
             shutil.move(package, dest / filename)
