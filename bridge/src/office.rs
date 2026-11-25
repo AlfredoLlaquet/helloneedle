@@ -6,6 +6,8 @@ use roxmltree::Node;
 use serde_json::{json, Value};
 use std::{fs::File, io::Read, path::Path};
 
+mod docx;
+pub(crate) use docx::{preview_docx, visit_docx};
 mod legacy;
 mod odf;
 mod ooxml;
@@ -28,6 +30,9 @@ pub fn extract(path: &Path, extension: &str) -> Result<Option<Document>> {
     ) {
         return Ok(None);
     }
+    if kind == "docx" {
+        return docx::collect(path).map(Some);
+    }
     let file = File::open(path).map_err(|e| anyhow::anyhow!("unreadable_document: {e}"))?;
     if file.metadata()?.len() > MAX_FILE_BYTES {
         bail!("resource_limit: document size");
@@ -44,7 +49,7 @@ pub fn extract(path: &Path, extension: &str) -> Result<Option<Document>> {
         )?,
         _ => {
             let mut pkg = package::Package::open(file)?;
-            if matches!(kind.as_str(), "docx" | "xlsx" | "pptx") {
+            if matches!(kind.as_str(), "xlsx" | "pptx") {
                 ooxml::extract(&mut pkg, &kind, &mut out)?;
             } else {
                 if let Some(manifest) = pkg.optional("META-INF/manifest.xml")? {

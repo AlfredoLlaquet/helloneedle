@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::package::{parse, Package, Rel};
-use super::{
-    cell_name, name, paragraph_location, push_cell, Output, RichText, Style, MAX_COLS, MAX_ROWS,
-    MAX_TEXT_BYTES,
-};
+use super::{cell_name, name, push_cell, Output, MAX_COLS, MAX_ROWS, MAX_TEXT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use roxmltree::{Document, Node};
 use serde_json::json;
@@ -56,26 +53,31 @@ fn child<'a, 'i>(n: Node<'a, 'i>, group: &str, local: &str) -> Option<Node<'a, '
     n.children().find(|&v| is(v, group, local))
 }
 
-pub(super) fn extract(pkg: &mut Package, kind: &str, out: &mut Output) -> Result<()> {
+pub(super) fn main_part(pkg: &mut Package, fallback: &str) -> Result<String> {
     let root = pkg.rels("")?;
-    let fallback = match kind {
-        "docx" => "word/document.xml",
-        "xlsx" => "xl/workbook.xml",
-        _ => "ppt/presentation.xml",
-    };
-    let main = if root.is_empty() {
-        fallback.to_owned()
+    if root.is_empty() {
+        Ok(fallback.to_owned())
     } else {
         root.values()
             .find(|r| r.kind == "officeDocument")
             .and_then(|r| r.part.clone())
-            .ok_or_else(|| anyhow!("corrupt_document: missing office document relationship"))?
-    };
+            .ok_or_else(|| anyhow!("corrupt_document: missing office document relationship"))
+    }
+}
+
+pub(super) fn extract(pkg: &mut Package, kind: &str, out: &mut Output) -> Result<()> {
+    let main = main_part(
+        pkg,
+        if kind == "xlsx" {
+            "xl/workbook.xml"
+        } else {
+            "ppt/presentation.xml"
+        },
+    )?;
     let text = pkg.required(&main)?;
     let doc = parse(&text)?;
     let rels = pkg.rels(&main)?;
     match kind {
-        "docx" => word_document(pkg, &rels, &doc, out),
         "xlsx" => workbook(pkg, &rels, &doc, out),
         _ => presentation(pkg, &rels, &doc, out),
     }
@@ -91,14 +93,7 @@ fn internal(rel: &Rel) -> Result<&str> {
         .ok_or_else(|| anyhow!("unsupported_document: external or invalid part"))
 }
 
-#[derive(Default)]
-struct WordState {
-    paragraph: usize,
-    tables: usize,
-    headings: HashMap<String, usize>,
-}
-
-fn named_heading(s: &str) -> Option<usize> {
+pub(super) fn named_heading(s: &str) -> Option<usize> {
     let name = s.to_ascii_lowercase();
     name.strip_prefix("heading")?
         .trim()
@@ -113,17 +108,9 @@ fn outline(ppr: Node<'_, '_>) -> Option<usize> {
         .filter(|v| *v < 9)
         .map(|n| n + 1)
 }
-fn word_document(
-    pkg: &mut Package,
-    rels: &HashMap<String, Rel>,
-    doc: &Document<'_>,
-    out: &mut Output,
-) -> Result<()> {
-    let root = doc.root_element();
-    let body = child(root, WORD, "body")
-        .filter(|_| word(root, "document"))
-        .ok_or_else(|| anyhow!("corrupt_document: missing Word body"))?;
-    let mut state = WordState::default();
+pub(super) fn word_headings(pkg: &mut Package, main: &str) -> Result<HashMap<String, usize>> {
+    let rels = pkg.rels(main)?;
+    let mut headings = HashMap::new();
     if let Some(rel) = rels.values().find(|r| r.kind == "styles") {
         if let Some(text) = pkg.optional(internal(rel)?)? {
             let styles = parse(&text)?;
@@ -142,111 +129,12 @@ fn word_document(
                         .and_then(named_heading)
                 });
                 if let (Some(id), Some(l)) = (id, level) {
-                    state.headings.insert(id.into(), l);
+                    headings.insert(id.into(), l);
                 }
             }
         }
     }
-    word_contents(body, &mut state, None, out, 0)
-}
-
-fn word_contents(
-    n: Node<'_, '_>,
-    s: &mut WordState,
-    cell: Option<(usize, usize, usize)>,
-    out: &mut Output,
-    depth: usize,
-) -> Result<()> {
-    if depth > 128 {
-        bail!("resource_limit: document nesting")
-    }
-    for node in n.children().filter(|n| n.is_element()) {
-        if word(node, "p") {
-            s.paragraph += 1;
-            let heading = child(node, WORD, "pPr").and_then(|pr| {
-                outline(pr).or_else(|| {
-                    child(pr, WORD, "pStyle")
-                        .and_then(wval)
-                        .and_then(|id| s.headings.get(id).copied().or_else(|| named_heading(id)))
-                })
-            });
-            let mut rich = RichText::default();
-            word_runs(node, Style::default(), &mut rich, 0)?;
-            let (text, html) = rich.finish(heading);
-            let (loc, label) = paragraph_location(s.paragraph, heading, cell);
-            out.push(text, loc, label, Some(html))?;
-        } else if word(node, "tbl") {
-            s.tables += 1;
-            let table = s.tables;
-            for (rownum, row) in node.children().filter(|&n| word(n, "tr")).enumerate() {
-                let mut col = 1;
-                if let Some(skip) = child(row, WORD, "trPr")
-                    .and_then(|pr| child(pr, WORD, "gridBefore"))
-                    .and_then(wval)
-                {
-                    col = 1 + skip
-                        .parse::<usize>()
-                        .ok()
-                        .filter(|n| *n < MAX_COLS)
-                        .unwrap_or(0);
-                }
-                for tc in row.children().filter(|&n| word(n, "tc")) {
-                    word_contents(tc, s, Some((table, rownum + 1, col)), out, depth + 1)?;
-                    let span = child(tc, WORD, "tcPr")
-                        .and_then(|pr| child(pr, WORD, "gridSpan"))
-                        .and_then(wval)
-                        .and_then(|s| s.parse::<usize>().ok())
-                        .filter(|n| (1..=MAX_COLS).contains(n))
-                        .unwrap_or(1);
-                    col += span;
-                }
-            }
-        } else if word(node, "sdt")
-            || word(node, "sdtContent")
-            || word(node, "customXml")
-            || word(node, "ins")
-            || word(node, "moveTo")
-        {
-            word_contents(node, s, cell, out, depth + 1)?;
-        }
-    }
-    Ok(())
-}
-
-fn word_runs(n: Node<'_, '_>, mut style: Style, rich: &mut RichText, depth: usize) -> Result<()> {
-    if depth > 128 {
-        bail!("resource_limit: Word run nesting");
-    }
-    if word(n, "r") {
-        if let Some(props) = child(n, WORD, "rPr") {
-            for p in props.children().filter(|n| n.is_element()) {
-                let on = !matches!(wval(p), Some("0" | "off" | "false" | "none"));
-                match name(p) {
-                    "b" => style.bold = on,
-                    "i" => style.italic = on,
-                    "u" => style.underline = on,
-                    "strike" => style.strike = on,
-                    _ => {}
-                }
-            }
-        }
-    }
-    for c in n.children().filter(|n| n.is_element()) {
-        if !namespace(c.tag_name().namespace(), WORD) {
-            continue;
-        }
-        match name(c) {
-            "t" => rich.append(c.text().unwrap_or(""), style)?,
-            "tab" | "ptab" => rich.append("\t", style)?,
-            "br" | "cr" => rich.append("\n", style)?,
-            "noBreakHyphen" => rich.append("\u{2011}", style)?,
-            "softHyphen" => rich.append("\u{ad}", style)?,
-            "r" | "hyperlink" | "sdt" | "sdtContent" | "smartTag" | "ins" | "moveTo"
-            | "fldSimple" | "customXml" => word_runs(c, style, rich, depth + 1)?,
-            _ => {}
-        }
-    }
-    Ok(())
+    Ok(headings)
 }
 
 fn strings(n: Node<'_, '_>) -> String {

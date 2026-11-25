@@ -340,7 +340,7 @@ void MainWindow::startSearch()
     problems.clear();
     failure.clear();
     count = 0;
-    documentsScanned = 0;
+    filesScanned = 0;
     errors = 0;
     truncated = false;
     if (queryEdit->text().isEmpty() || folderEdit->text().isEmpty()) {
@@ -359,8 +359,9 @@ void MainWindow::startSearch()
     worker.start("search", request, [this](const QJsonObject &data) {
         const auto type = data.value("type").toString();
         if (type == "progress" || type == "done")
-            documentsScanned = data.value("documentsScanned").toInteger(documentsScanned);
+            filesScanned = data.value("files").toInteger(data.value("documentsScanned").toInteger(filesScanned));
         if (type == "match") addMatch(data);
+        else if (type == "discard") discardContentMatches(data);
         else if (type == "error") {
             ++errors;
             if (problems.size() < 200) problems.append(data);
@@ -422,6 +423,24 @@ void MainWindow::addMatch(const QJsonObject &match)
     }
 }
 
+void MainWindow::discardContentMatches(const QJsonObject &file)
+{
+    QString id = file.value("pathBytes").toString();
+    if (id.isEmpty()) id = file.value("path").toString();
+    auto *group = groups.value(id);
+    if (!group) return;
+    for (int index = group->childCount() - 1; index >= 0; --index) {
+        const auto hit = group->child(index)->data(0, Qt::UserRole).toJsonObject();
+        if (hit.value("kind") == "filename") continue;
+        delete group->takeChild(index);
+        --count;
+    }
+    if (!group->childCount()) {
+        groups.remove(id);
+        delete group;
+    }
+}
+
 void MainWindow::displayMatch(QTreeWidgetItem *item)
 {
     const auto match = item ? item->data(0, Qt::UserRole).toJsonObject() : QJsonObject();
@@ -436,8 +455,8 @@ void MainWindow::refreshStatus()
     cancel->setEnabled(active);
     cancelAction->setEnabled(active);
     search->setEnabled(!active);
-    const QString scanned = documentsScanned == 1 ? ui("1 document scanned")
-                                                 : ui("%1 documents scanned").arg(documentsScanned);
+    const QString scanned = filesScanned == 1 ? ui("1 file scanned")
+                                                 : ui("%1 files scanned").arg(filesScanned);
     const QString matches = count == 1 ? ui("1 match") : ui("%1 matches").arg(count);
     const QString counts = scanned + QStringLiteral(" · ") + matches;
     QString message;

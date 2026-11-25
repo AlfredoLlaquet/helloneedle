@@ -40,6 +40,7 @@ private:
     void selectLanguage(const QString &code);
     void retranslate();
     void addMatch(const QJsonObject &event);
+    void discardContentMatches(const QJsonObject &file);
     void displayMatch(QTreeWidgetItem *item);
     void showErrors();
     void refreshStatus();
@@ -89,7 +90,7 @@ private:
     QList<QJsonObject> problems;
     State state = State::Ready;
     qsizetype count = 0;
-    qint64 documentsScanned = 0;
+    qint64 filesScanned = 0;
     int errors = 0;
     bool truncated = false;
     QString failure;

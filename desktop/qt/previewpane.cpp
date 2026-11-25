@@ -295,7 +295,7 @@ void PreviewPane::present(const QJsonObject &data, bool first)
         hasPdf = kind == "pdf" && !selectedSpot.isEmpty();
         toggle->setVisible(hasPdf);
         if (hasPdf) pdf->open(match, selectedSpot);
-        chooseView(hasPdf);
+        chooseView(hasPdf && !selectedSpot.value("pdfPlain").toBool());
     }
 }
 }

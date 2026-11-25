@@ -518,7 +518,7 @@ private slots:
             QCOMPARE(url.adjusted(QUrl::StripTrailingSlash), QUrl("https://www.thecrumbs.org"));
     }
 
-    void scannedDocumentsAndErrors()
+    void scannedFilesAndErrors()
     {
         QTemporaryDir docs;
         QVERIFY(docs.isValid());
@@ -533,22 +533,27 @@ private slots:
         QCOMPARE(unreadable.write(QByteArray(8, '\0')), 8);
         unreadable.close();
 
+        QFile video(docs.filePath("03-movie.mp4"));
+        QVERIFY(video.open(QIODevice::WriteOnly));
+        video.write("Needle");
+        video.close();
+
         auto *status = control<QLabel>("statusLabel");
         auto *errors = control<QLabel>("errorCountLabel");
         auto *details = control<QAbstractButton>("issuesButton");
         QVERIFY(status && errors && details);
         QVERIFY(!errors->isVisible() && !details->isVisible());
         const bool spanish = hn::currentLanguage() == "es";
-        const QString first = spanish ? "1 documento examinado" : "1 document scanned";
+        const QString zero = spanish ? "0 archivos examinados" : "0 files scanned";
         bool countedBeforeFirstHit = false;
         QObject observation;
         connect(results->model(), &QAbstractItemModel::rowsInserted, &observation, [&] {
-            if (cancel->isEnabled() && status->text().contains(first))
+            if (cancel->isEnabled() && !status->text().contains(zero))
                 countedBeforeFirstHit = true;
         });
         QVERIFY(submit("Needle", false, docs.path()));
         QVERIFY(countedBeforeFirstHit);
-        const QString scanned = spanish ? "2 documentos examinados" : "2 documents scanned";
+        const QString scanned = spanish ? "4 archivos examinados" : "4 files scanned";
         QVERIFY2(status->text().contains(scanned), qPrintable(status->text()));
         QVERIFY(status->text().contains(spanish ? "1 coincidencia" : "1 match"));
         QCOMPARE(errors->text(), "1 error");
@@ -573,7 +578,7 @@ private slots:
 
         QVERIFY(unreadable.remove());
         QVERIFY(submit("NoMatchAnywhere", false, docs.path()));
-        QVERIFY(status->text().contains(scanned));
+        QVERIFY(status->text().contains(spanish ? "3 archivos examinados" : "3 files scanned"));
         QVERIFY(status->text().contains(spanish ? "0 coincidencias" : "0 matches"));
         QVERIFY(!errors->isVisible() && !details->isVisible());
     }

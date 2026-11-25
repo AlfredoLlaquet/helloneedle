@@ -20,6 +20,8 @@ Hello Needle 1.1.0 is free to download and use. Choose the file for your compute
 
 The Windows x64 installer also runs on Windows 11 on Arm. The Mac download runs natively on both kinds of Mac. The release page includes the source code and checksums for these exact files. [Hello Needle 1.1.0 release](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.1.0)
 
+FreeBSD 15.x users can also test the upcoming 1.2.0 changes. [Development package and installation](#freebsd-15-development-builds) · [Changes in the test build](#changes-in-the-120-development-build)
+
 ### Install on FreeBSD
 
 There are separate amd64 packages for **FreeBSD 14.x** and **FreeBSD 15.x**. Run `freebsd-version -u` to see which major version your computer uses. The 14.x package was built on 14.4 and tested on both 14.4 and 14.5. The 15.x package was built and tested on 15.1.
@@ -39,6 +41,19 @@ pkg install ./helloneedle-1.1.0-FreeBSD-15-amd64.pkg
 ```
 
 Back in your desktop account, open the application menu and search for **Hello Needle**, or run `helloneedle` in a terminal. To open a particular folder at startup, run `helloneedle "$HOME/Documents"`. To uninstall, run `pkg delete helloneedle` as root.
+
+### FreeBSD 15 development builds
+
+Each push to `development` builds a FreeBSD 15.x amd64 test package. Open a successful run with the change you want, sign in to GitHub, and download the **.pkg** from its summary. The summary also gives the SHA-256 checksum and matching source archive. [FreeBSD development builds](https://github.com/AlfredoLlaquet/helloneedle/actions/workflows/freebsd-package.yml?query=branch%3Adevelopment)
+
+Place the downloaded package in a folder by itself, quit Hello Needle, and run these commands there. Compare the output of the first command with the checksum in the run. Run the second command as **root**, then launch Hello Needle from your desktop account.
+
+```sh
+sha256 -q ./helloneedle-*-FreeBSD-15-amd64.pkg
+pkg install ./helloneedle-*-FreeBSD-15-amd64.pkg
+```
+
+The package version includes the build and attempt numbers so `pkg` can upgrade one test build to the next. For a source build of the same revision, unpack the source archive linked in that run and start at the CMake step in the FreeBSD instructions. [FreeBSD source build](#build-and-run-on-freebsd-14x-and-15x)
 
 ### Install on Ubuntu
 
@@ -76,9 +91,17 @@ Hello Needle 1.1.0 on FreeBSD found 15 matches across 13 scanned documents. In t
 
 ![Hello Needle on FreeBSD with the second occurrence of “Needle” highlighted on page 2 of a PDF](docs/screenshots/1.1.0/freebsd-pdf-search.png)
 
-### New in 1.1.0
+### Changes in the 1.2.0 development build
 
-- **Search saved web pages with embedded pictures.** Choose **Document** in the **Search in** menu beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The size of the saved HTML file can exceed 1 GiB. The reader applies a 1 GiB memory budget to what it keeps for that document. If it reaches that budget, it reports the file under **Details…** and continues searching. **Source** searches the original markup under its existing size limits.
+- **Follow the whole folder scan.** **Files scanned** advances once for every file examined after your filters apply. Videos, archives, other recognized binary files, and PDFs with no searchable text all count. Hello Needle silently passes over their contents. Files with unfamiliar extensions are checked for readable text. **Search file names** can still find a video or archive by name. **Details…** lists files that actually failed to open or process.
+- **Search large text files and source.** Text lists, JSON exports, and HTML or Markdown in **Source** mode are read in large chunks. File size and line count no longer stop the search. A literal phrase can span two chunks, even within a single very long line. Selecting it takes the preview straight to the passage. A complex regular expression on an exceptionally long individual line can still reach the reader’s memory budget.
+- **Search older Spanish documents and saved web pages.** Plain text can use Windows-1252, including accented letters and inverted punctuation. The Word reader follows inherited text visibility in older `.doc` files. HTML exports containing terminal control characters can be searched as a document or as source.
+- **Search long Word manuscripts.** Hello Needle reads the main body of a DOCX paragraph by paragraph. Formatting changes can split a phrase into several pieces in the file. You can still find the whole phrase and see it highlighted with the surrounding paragraphs.
+- **Search long PDFs.** The PDF reader works page by page. The total number of words and the total amount of page layout data no longer stop a search. If Poppler crashes while extracting the page layout, Hello Needle retries using plain text. Recovered passages open with the exact text selected. **Show page** still opens the printed page when coordinates for a highlight are unavailable. A scanned page without a text layer is skipped, and searchable pages in the same PDF keep their original page numbers.
+
+### New in the 1.1.0 release
+
+- **Search saved web pages with embedded pictures.** Choose **Document** in the **Search in** menu beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The size of the saved HTML file can exceed 1 GiB. The reader applies a 1 GiB memory budget to what it keeps for that document. If it reaches that budget, it reports the file under **Details…** and continues searching.
 - **Follow a search as it runs.** The left of the status bar shows documents scanned and matches found. A successfully searched document counts once, even if it contains no matches. If any files cause errors, the error count appears on the right beside **Details…**. Click the button for the filenames and reasons.
 - **Identify the selected result.** The left-aligned preview heading gives the location followed by the filename, for example `Paragraph 12 - Meeting notes.docx`. A long heading can wrap onto a second line. The **Open original** button sits directly below the heading on the left and opens the file in its usual application. The buttons include labeled icons that follow the light or dark theme and come with the app on every platform.
 - **Visit TheCrumbs.org.** The centered link reads `Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org`. Hovering over it underlines the whole sentence and shows the hint `Open TheCrumbs.org in your browser`. Clicking anywhere on the text opens the site in your default browser. In a narrow window the link moves to its own row below the counters.

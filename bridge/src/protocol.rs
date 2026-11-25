@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::{extract, paths, revision, search, Block, Failure};
+use crate::{documents, office, paths, revision, search, Block, Document, Failure, Reader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -95,10 +95,7 @@ impl<W: Write> Emitter<W> {
     }
 }
 
-fn context_range(blocks: &[Block], index: usize, kind: &str) -> std::ops::Range<usize> {
-    if kind == "pdf" {
-        return index..index + 1;
-    }
+fn context_range(blocks: &[Block], index: usize) -> std::ops::Range<usize> {
     let mut first = index.saturating_sub(12);
     let mut end = (index + 13).min(blocks.len());
     let item = &blocks[index].location;
@@ -121,7 +118,7 @@ fn context_range(blocks: &[Block], index: usize, kind: &str) -> std::ops::Range<
 // A selected HTML paragraph can now exceed the desktop's entire protocol frame.
 // Keep ordinary previews rich. For a giant paragraph, send the text around the
 // selected occurrence and its original UTF-16 offset for Qt's highlighter.
-fn clip_html_paragraph(block: &mut Block, focus: usize) {
+pub(crate) fn clip_paragraph(block: &mut Block, focus: usize) {
     block.html = None;
     const NEARBY_CHARS: usize = 8192;
     if block.text.len() <= 2 * NEARBY_CHARS {
@@ -162,7 +159,7 @@ fn html_context(
     const MAX_CONTEXT: usize = 8 * 1024 * 1024;
     let size = |b: &Block| b.text.len() + b.html.as_ref().map_or(0, String::len);
     if size(&blocks[index]) > MAX_CONTEXT {
-        clip_html_paragraph(&mut blocks[index], focus);
+        clip_paragraph(&mut blocks[index], focus);
     }
     let mut total: usize = blocks[range.clone()].iter().map(size).sum();
     while total > MAX_CONTEXT {
@@ -175,6 +172,81 @@ fn html_context(
         }
     }
     range
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewBlocks {
+    kind: String,
+    index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_blocks: Option<usize>,
+    blocks: Vec<Block>,
+}
+
+fn buffered_preview(
+    mut doc: Document,
+    index: usize,
+    focus: usize,
+) -> Result<PreviewBlocks, Failure> {
+    if index >= doc.blocks.len() && !(doc.blocks.is_empty() && index == 0) {
+        return Err(Failure::new(
+            "location",
+            "Block index is outside the document",
+        ));
+    }
+    let mut range = if doc.blocks.is_empty() {
+        0..0
+    } else {
+        context_range(&doc.blocks, index)
+    };
+    if doc.kind == "html" && !range.is_empty() {
+        range = html_context(&mut doc.blocks, index, focus, range);
+    }
+    Ok(PreviewBlocks {
+        kind: doc.kind,
+        index: index - range.start,
+        total_blocks: Some(doc.blocks.len()),
+        blocks: doc.blocks.drain(range).collect(),
+    })
+}
+
+fn load_preview(path: &Path, req: &PreviewRequest) -> Result<PreviewBlocks, Failure> {
+    let index = match req.location.get("index") {
+        None => 0,
+        Some(value) => value
+            .as_u64()
+            .and_then(|i| usize::try_from(i).ok())
+            .ok_or_else(|| Failure::new("location", "Invalid block index"))?,
+    };
+    let (kind, blocks, index, total_blocks) = match Reader::for_path(path, &req.mode) {
+        Reader::Buffered(reader) => {
+            return buffered_preview(reader.read(path)?, index, req.block_start)
+        }
+        Reader::Lines(kind) => {
+            let (blocks, selected, total) =
+                documents::text_stream::preview(path, kind, &req.location, req.block_start)
+                    .map_err(Failure::decoder)?;
+            (kind, blocks, selected, total)
+        }
+        Reader::Pdf => {
+            let block = documents::pdf::preview(path, &req.location, req.block_start)
+                .map_err(Failure::decoder)?;
+            ("pdf", vec![block], 0, None)
+        }
+        Reader::Docx => {
+            let (blocks, selected, total) =
+                office::preview_docx(path, index, req.block_start).map_err(Failure::decoder)?;
+            ("docx", blocks, selected, total)
+        }
+        Reader::Skip => ("filename", Vec::new(), 0, Some(0)),
+    };
+    Ok(PreviewBlocks {
+        kind: kind.into(),
+        blocks,
+        index,
+        total_blocks,
+    })
 }
 
 fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Result<()> {
@@ -192,23 +264,18 @@ fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Re
         Ok(stamp) => stamp,
         Err(err) => return events.error(err, Some(&path)),
     };
-    if request.revision.is_some_and(|wanted| wanted != before) {
+    if request
+        .revision
+        .as_ref()
+        .is_some_and(|wanted| wanted != &before)
+    {
         return events.error(
             Failure::new("changed", "File changed since the search"),
             Some(&path),
         );
     }
-    let mut doc = match extract(&path, &request.mode) {
-        Ok(Some(doc)) => doc,
-        Ok(None) => {
-            return events.error(
-                Failure::new(
-                    "unsupported_document",
-                    "File has no supported text representation",
-                ),
-                Some(&path),
-            )
-        }
+    let content = match load_preview(&path, &request) {
+        Ok(content) => content,
         Err(err) => return events.error(err, Some(&path)),
     };
     if revision(&path).as_ref().ok() != Some(&before) {
@@ -217,73 +284,20 @@ fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Re
             Some(&path),
         );
     }
-    let mut index = match request.location.get("index") {
-        None => 0,
-        Some(value) => match value.as_u64().and_then(|n| usize::try_from(n).ok()) {
-            Some(n) => n,
-            None => {
-                return events.error(Failure::new("location", "Invalid block index"), Some(&path))
-            }
-        },
-    };
-    if doc.kind == "pdf" {
-        if let Some(page) = request.location.get("page") {
-            if doc
-                .blocks
-                .get(index)
-                .and_then(|block| block.location.get("page"))
-                != Some(page)
-            {
-                let Some(first_on_page) = doc
-                    .blocks
-                    .iter()
-                    .position(|block| block.location.get("page") == Some(page))
-                else {
-                    return events.error(
-                        Failure::new("location", "Page is outside the document"),
-                        Some(&path),
-                    );
-                };
-                index = first_on_page;
-            }
-        }
-    }
-    if index >= doc.blocks.len() && !(doc.blocks.is_empty() && index == 0) {
-        return events.error(
-            Failure::new("location", "Block index is outside the document"),
-            Some(&path),
-        );
-    }
-    let range = if doc.blocks.is_empty() {
-        0..0
-    } else {
-        let range = context_range(&doc.blocks, index, &doc.kind);
-        if doc.kind == "html" && request.mode == "document" {
-            html_context(&mut doc.blocks, index, request.block_start, range)
-        } else {
-            range
-        }
-    };
     #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Preview<'a> {
+    struct Preview {
         r#type: &'static str,
-        kind: String,
         mode: String,
-        index: usize,
-        total_blocks: usize,
-        blocks: &'a [Block],
         revision: String,
+        #[serde(flatten)]
+        content: PreviewBlocks,
     }
     events.files = 1;
     events.send(&Preview {
         r#type: "preview",
-        kind: doc.kind,
         mode: request.mode,
-        index: index - range.start,
-        total_blocks: doc.blocks.len(),
-        blocks: &doc.blocks[range],
         revision: before,
+        content,
     })
 }
 
@@ -443,7 +457,10 @@ mod tests {
         fs::write(dir.0.join("a.txt"), "no occurrences").unwrap();
         fs::write(dir.0.join("b.txt"), "x ".repeat(10_001)).unwrap();
         let response = events("search", json!({"folder":dir.0, "query":"x"}));
-        assert_eq!(response[0], json!({"type":"progress","documentsScanned":1}));
+        assert_eq!(
+            response[0],
+            json!({"type":"progress","files":1,"documentsScanned":0})
+        );
         let done = response.last().unwrap();
         assert_eq!(done["count"], 10_000);
         assert_eq!(done["files"], 2);

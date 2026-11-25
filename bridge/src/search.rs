@@ -3,9 +3,10 @@
 // core/src/search.rs by Leopold Luley and the Clapgrep contributors (see NOTICE.md).
 
 use crate::{
-    extract, paths,
+    documents::{pdf, text_stream},
+    office, paths,
     protocol::{Emitter, SearchRequest},
-    revision, Failure,
+    revision, Block, Failure, Reader,
 };
 use glob::{MatchOptions, Pattern};
 use grep_matcher::Matcher;
@@ -32,13 +33,20 @@ struct MatchEvent<'a> {
     mode: &'a str,
     location: &'a Value,
     label: &'a str,
+    #[serde(flatten)]
+    excerpt: Excerpt<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Excerpt<'a> {
     text: &'a str,
     start: usize,
     length: usize,
     block_start: usize,
     block_length: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    revision: Option<&'a str>,
 }
 
 struct FileSearch<'a> {
@@ -68,6 +76,33 @@ fn compact_location(location: &Value) -> Value {
 }
 
 impl FileSearch<'_> {
+    fn emit<W: Write>(
+        &self,
+        kind: &str,
+        label: &str,
+        location: &Value,
+        excerpt: Excerpt<'_>,
+        sink: &mut Emitter<W>,
+    ) -> io::Result<bool> {
+        if sink.count == MAX_RESULTS {
+            sink.truncated = true;
+            return Ok(false);
+        }
+        sink.send(&MatchEvent {
+            r#type: "match",
+            identity: &self.identity,
+            display_path: self.display_path,
+            kind,
+            mode: self.mode,
+            location,
+            label,
+            excerpt,
+            revision: self.revision,
+        })?;
+        sink.count += 1;
+        Ok(true)
+    }
+
     fn matches<W: Write>(
         &self,
         kind: &str,
@@ -78,24 +113,18 @@ impl FileSearch<'_> {
     ) -> io::Result<()> {
         let mut previous_end = 0;
         let mut utf16_end = 0;
-        let mut write_error = None;
         let location = compact_location(location);
         self.matcher
-            .find_iter(text.as_bytes(), |m| {
+            .try_find_iter(text.as_bytes(), |m| {
                 let (start, end) = (m.start(), m.end());
                 // Explicit byte-mode regexes may split an encoded Unicode character.
                 if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
-                    return true;
-                }
-                if sink.count == MAX_RESULTS {
-                    sink.truncated = true;
-                    return false;
+                    return Ok(true);
                 }
                 let block_start = utf16_end + utf16_len(&text[previous_end..start]);
                 let block_length = utf16_len(&text[start..end]);
                 previous_end = end;
                 utf16_end = block_start + block_length;
-
                 let left = text[..start]
                     .char_indices()
                     .rev()
@@ -105,36 +134,83 @@ impl FileSearch<'_> {
                     .char_indices()
                     .nth(240)
                     .map_or(text.len(), |(i, _)| start + i);
-                let event = MatchEvent {
-                    r#type: "match",
-                    identity: &self.identity,
-                    display_path: self.display_path,
+                self.emit(
                     kind,
-                    mode: self.mode,
-                    location: &location,
                     label,
-                    text: &text[left..right],
-                    start: utf16_len(&text[left..start]),
-                    length: utf16_len(&text[start..end.min(right)]),
-                    block_start,
-                    block_length,
-                    revision: self.revision,
-                };
-                match sink.send(&event) {
-                    Ok(()) => {
-                        sink.count += 1;
-                        true
-                    }
-                    Err(err) => {
-                        write_error = Some(err);
-                        false
+                    &location,
+                    Excerpt {
+                        text: &text[left..right],
+                        start: utf16_len(&text[left..start]),
+                        length: utf16_len(&text[start..end.min(right)]),
+                        block_start,
+                        block_length,
+                    },
+                    sink,
+                )
+            })
+            .map_err(io::Error::other)?
+    }
+
+    fn search_content<W: Write>(
+        &self,
+        path: &Path,
+        reader: Reader,
+        req: &SearchRequest,
+        sink: &mut Emitter<W>,
+    ) -> Result<bool, Failure> {
+        let mut block_hit = |kind: &str, block: Block| -> anyhow::Result<bool> {
+            self.matches(kind, &block.label, &block.location, &block.text, sink)?;
+            Ok(!sink.truncated)
+        };
+        match reader {
+            Reader::Skip => Ok(false),
+            Reader::Lines(kind) => text_stream::search(
+                path,
+                kind,
+                self.matcher,
+                &req.query,
+                req.regex,
+                |location, text, start, length, block_start, block_length| {
+                    let label = format!("Line {}", location["line"]);
+                    Ok(self.emit(
+                        kind,
+                        &label,
+                        location,
+                        Excerpt {
+                            text,
+                            start,
+                            length,
+                            block_start,
+                            block_length,
+                        },
+                        sink,
+                    )?)
+                },
+            )
+            .map_err(Failure::decoder),
+            Reader::Pdf => {
+                let mut has_text = false;
+                pdf::scan(path, |block| {
+                    has_text |= !block.text.is_empty();
+                    block_hit("pdf", block)
+                })
+                .map_err(Failure::decoder)?;
+                Ok(has_text)
+            }
+            Reader::Docx => {
+                office::visit_docx(path, |block| block_hit("docx", block))
+                    .map_err(Failure::decoder)?;
+                Ok(true)
+            }
+            Reader::Buffered(reader) => {
+                let doc = reader.read(path)?;
+                for block in doc.blocks {
+                    if !block_hit(&doc.kind, block).map_err(Failure::decoder)? {
+                        break;
                     }
                 }
-            })
-            .map_err(io::Error::other)?;
-        match write_error {
-            Some(err) => Err(err),
-            None => Ok(()),
+                Ok(true)
+            }
         }
     }
 }
@@ -204,6 +280,14 @@ pub(crate) fn run<W: Write>(req: SearchRequest, sink: &mut Emitter<W>) -> io::Re
             continue;
         }
         sink.files += 1;
+        if sink.files == 1 || last_progress.elapsed() >= Duration::from_millis(100) {
+            sink.send(&json!({"type":"progress", "files":sink.files, "documentsScanned":sink.documents_scanned}))?;
+            last_progress = Instant::now();
+        }
+        let reader = Reader::for_path(path, &req.mode);
+        if matches!(reader, Reader::Skip) && !req.filenames {
+            continue;
+        }
         let display_path = relative.to_string_lossy();
         let stamp = revision(path);
         let file = FileSearch {
@@ -226,38 +310,45 @@ pub(crate) fn run<W: Write>(req: SearchRequest, sink: &mut Emitter<W>) -> io::Re
                 break;
             }
         }
+        if matches!(reader, Reader::Skip) {
+            continue;
+        }
         if let Err(err) = stamp {
             sink.error(err, Some(path))?;
             continue;
         }
-        let doc = match extract(path, &req.mode) {
-            Ok(Some(doc)) => doc,
-            Ok(None) => continue,
-            Err(err) => {
-                sink.error(err, Some(path))?;
-                continue;
-            }
+        let before_content = sink.count;
+        let outcome = file.search_content(path, reader, &req, sink);
+        let outcome = if revision(path).as_ref().ok().map(String::as_str) != file.revision {
+            Err(Failure::new("changed", "File changed while being read"))
+        } else {
+            outcome
         };
-        if revision(path).as_ref().ok().map(String::as_str) != file.revision {
-            sink.error(
-                Failure::new("changed", "File changed while being read"),
-                Some(path),
-            )?;
-            continue;
-        }
-        for block in doc.blocks {
-            file.matches(&doc.kind, &block.label, &block.location, &block.text, sink)?;
-            if sink.truncated {
-                break;
+        // Results stream immediately. Withdraw provisional content hits if a later
+        // read fails or the file changes; independent filename hits remain valid.
+        if !matches!(outcome, Ok(true)) {
+            if sink.count > before_content {
+                #[derive(Serialize)]
+                struct Discard<'a> {
+                    r#type: &'static str,
+                    #[serde(flatten)]
+                    identity: &'a paths::Identity,
+                }
+                sink.send(&Discard {
+                    r#type: "discard",
+                    identity: &file.identity,
+                })?;
+                sink.count = before_content;
             }
+            sink.truncated = false;
+        }
+        match outcome {
+            Err(err) => sink.error(err, Some(path))?,
+            Ok(true) if !sink.truncated => sink.documents_scanned += 1,
+            _ => {}
         }
         if sink.truncated {
             break;
-        }
-        sink.documents_scanned += 1;
-        if sink.documents_scanned == 1 || last_progress.elapsed() >= Duration::from_millis(100) {
-            sink.send(&json!({"type":"progress","documentsScanned":sink.documents_scanned}))?;
-            last_progress = Instant::now();
         }
     }
     Ok(())

@@ -455,3 +455,143 @@ fn bounded_zip64_and_encrypted_compound_containers_have_distinct_results() {
         .to_string()
         .starts_with("encrypted_document:"));
 }
+
+#[test]
+fn docx_streams_to_the_last_paragraph_across_large_xml_and_preserves_preview_indices() {
+    const REPEATS: usize = 100_020;
+    let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+    archive
+        .start_file("word/document.xml", SimpleFileOptions::default())
+        .unwrap();
+    archive.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p/>"#).unwrap();
+
+    // Over 32 MiB of XML and 350,000 nodes, with fewer than a megabyte of searchable prose.
+    let paragraph = format!(
+        "<w:p><w:r><w:rPr><w:b/></w:rPr><w:instrText>{}</w:instrText><w:t>entry</w:t></w:r></w:p>",
+        "I".repeat(256)
+    );
+    let batch = paragraph.repeat(100);
+    for _ in 0..REPEATS / 100 {
+        archive.write_all(batch.as_bytes()).unwrap();
+    }
+    archive
+        .write_all(paragraph.repeat(REPEATS % 100).as_bytes())
+        .unwrap();
+    archive.write_all(b"<w:p><w:r><w:t>Ending </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>phrase</w:t></w:r></w:p></w:body></w:document>").unwrap();
+    let file = Fixture::new("docx", &archive.finish().unwrap().into_inner());
+
+    let mut count = 0;
+    visit_docx(&file.0, |block| {
+        assert_eq!(block.location["index"], count);
+        if count == REPEATS {
+            assert_eq!(block.text, "Ending phrase");
+            assert_eq!(block.location["paragraph"], REPEATS + 2);
+        }
+        count += 1;
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(count, REPEATS + 1);
+
+    let (context, selected, total) = preview_docx(&file.0, REPEATS, 7).unwrap();
+    assert_eq!(total, Some(count));
+    assert_eq!(context.len(), 13);
+    assert_eq!(context[selected].location["index"], REPEATS);
+    assert!(context[selected]
+        .html
+        .as_deref()
+        .unwrap()
+        .contains("Ending <i>phrase</i>"));
+}
+
+#[test]
+fn docx_streams_utf16_with_rebound_namespaces_and_can_stop_at_a_match() {
+    let source = r#"<document xmlns="http://purl.oclc.org/ooxml/wordprocessingml/main"
+        xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><body>
+        <sdt><sdtContent><p><pPr><pStyle w:val="Heading 4"/></pPr><r><t>日&#x1f600;</t></r><r><t><![CDATA[ & end]]></t></r>
+        <w:r xmlns:w="urn:other"><w:t>unrelated</w:t></w:r><del><r><t>deleted</t></r></del></p></sdtContent></sdt>
+        <tbl><tr><trPr><gridBefore w:val="2"/></trPr><tc><p><r><t>cell</t></r></p></tc></tr></tbl>
+        </body></document>"#;
+    for little in [false, true] {
+        let mut data = if little {
+            vec![0xff, 0xfe]
+        } else {
+            vec![0xfe, 0xff]
+        };
+        for unit in source.encode_utf16() {
+            let bytes = if little {
+                unit.to_le_bytes()
+            } else {
+                unit.to_be_bytes()
+            };
+            data.extend_from_slice(&bytes);
+        }
+        let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file("word/document.xml", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(&data).unwrap();
+        let file = Fixture::new("docx", &archive.finish().unwrap().into_inner());
+        let (context, index, total) = preview_docx(&file.0, 1, 0).unwrap();
+        assert_eq!((total, index), (Some(2), 1));
+        assert_eq!(context[0].text, "日😀 & end");
+        assert_eq!(context[0].location["heading_level"], 4);
+        assert_eq!(context[1].location["column"], 3);
+        let mut visits = 0;
+        visit_docx(&file.0, |_| {
+            visits += 1;
+            Ok(false)
+        })
+        .unwrap();
+        assert_eq!(visits, 1);
+    }
+}
+
+#[test]
+fn docx_rejects_unterminated_body_and_declared_entities() {
+    for source in [
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+        r#"<!DOCTYPE document [<!ENTITY local "replacement">]><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#,
+    ] {
+        let file = Fixture::new("docx", &zip(&[("word/document.xml", source)]));
+        assert!(visit_docx(&file.0, |_| Ok(true))
+            .unwrap_err()
+            .to_string()
+            .starts_with("corrupt_document:"));
+    }
+}
+
+#[test]
+fn docx_large_formatted_paragraph_previews_the_selected_unicode_occurrence() {
+    let prefix = "😀".repeat(1024);
+    let filler = "x".repeat(9 * 1024 * 1024);
+    let body = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{prefix}{filler}find here</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let file = Fixture::new("docx", &zip(&[("word/document.xml", &body)]));
+    let focus = prefix.encode_utf16().count() + filler.len();
+    let (blocks, selected, total) = preview_docx(&file.0, 0, focus).unwrap();
+    assert_eq!((total, selected), (Some(1), 0));
+    let block = &blocks[selected];
+    let start = focus - block.location["textOffset"].as_u64().unwrap() as usize;
+    let from_focus: String = char::decode_utf16(block.text.encode_utf16().skip(start))
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(from_focus, "find here");
+    assert!(block.text.len() < 32000);
+}
+
+#[test]
+fn docx_early_preview_finishes_after_its_neighbors() {
+    // An interrupted save after the previewed part cannot force a scan of the whole file.
+    let mut xml = String::from(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+    );
+    xml.push_str(&"<w:p><w:r><w:t>searchable</w:t></w:r></w:p>".repeat(120));
+    let file = Fixture::new("docx", &zip(&[("word/document.xml", &xml)]));
+    let (context, selected, total) = preview_docx(&file.0, 15, 0).unwrap();
+    assert_eq!((selected, total), (12, None));
+    assert_eq!(context.len(), 25);
+    assert_eq!(context[selected].location["paragraph"], 16);
+    assert!(visit_docx(&file.0, |_| Ok(true)).is_err());
+}

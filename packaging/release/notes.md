@@ -1,6 +1,11 @@
 Hello Needle @VERSION@ finds words and phrases in local documents, including searchable PDF, Microsoft Office and OpenDocument files. Its Qt 6 interface is available in English and Spanish.
 
-**New in 1.1.0.** In Document mode, Hello Needle skips embedded pictures as it reads saved HTML pages. Captions and image descriptions stay searchable. The status bar counts scanned documents and matches, places the error count beside **Details**, and includes a centered link to Alfredo Llaquet-Alsina’s Crumbs. The **Search in** selector sits beside **Options**. A selected result shows its location and filename above **Open original**. The buttons use icons included with the application. FreeBSD users can download a package for their 14.x or 15.x system.
+**New in @VERSION@**
+
+- Search large text files and JSON exports as they are read. A match can appear millions of lines into a file or inside a long single line. Selecting it opens the passage around that occurrence.
+- Search older Western European text with its original accents, saved HTML containing control characters, heavily formatted DOCX files, and older Word documents that use styles to control text visibility.
+- Search book-length PDFs a page at a time. If the PDF text extractor crashes while locating words on the printed page, Hello Needle retries in text mode. Successful matches keep their page numbers and the text preview highlights the selected occurrence.
+- Watch **Files scanned** advance as Hello Needle examines each file. Videos, archives and image-only PDFs count toward progress and pass quietly. **Details** shows the reason when a searchable document fails.
 
 | Desktop | Download | Installation |
 | --- | --- | --- |

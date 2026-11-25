@@ -169,10 +169,10 @@ impl Package {
         self.optional(part)?
             .ok_or_else(|| anyhow!("corrupt_document: missing package part {part}"))
     }
-    pub fn optional(&mut self, part: &str) -> Result<Option<String>> {
-        let file = match self.zip.by_name(part) {
-            Ok(f) => f,
-            Err(ZipError::FileNotFound) => return Ok(None),
+    fn entry(&mut self, part: &str) -> Result<Option<zip::read::ZipFile<'_, File>>> {
+        match self.zip.by_name(part) {
+            Ok(f) => Ok(Some(f)),
+            Err(ZipError::FileNotFound) => Ok(None),
             Err(e) if e.to_string().to_ascii_lowercase().contains("password") => {
                 bail!("encrypted_document: ZIP entry")
             }
@@ -180,10 +180,21 @@ impl Package {
                 bail!("unsupported_document: ZIP compression or encryption")
             }
             Err(e) => bail!("corrupt_document: ZIP entry: {e}"),
-        };
+        }
+    }
+
+    pub fn stream(&mut self, part: &str) -> Result<impl Read + '_> {
+        self.entry(part)?
+            .ok_or_else(|| anyhow!("corrupt_document: missing package part {part}"))
+    }
+
+    pub fn optional(&mut self, part: &str) -> Result<Option<String>> {
         let remaining = MAX_FILE_BYTES
             .saturating_sub(self.used)
             .min(MAX_TEXT_BYTES as u64);
+        let Some(file) = self.entry(part)? else {
+            return Ok(None);
+        };
         if file.size() > remaining {
             bail!("resource_limit: expanded ZIP data");
         }

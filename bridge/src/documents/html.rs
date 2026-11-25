@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read the Document representation of HTML without retaining embedded resources.
-use super::{has_binary_controls, markup};
+use super::markup;
 use crate::Document;
 use anyhow::Result;
 use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_16BE, UTF_16LE, UTF_8};
@@ -115,8 +115,11 @@ impl<R: Read> Read for Decoded<'_, R> {
             let (status, consumed, produced) =
                 self.decoder
                     .decode_to_utf8_without_replacement(input, self.buffer.as_mut(), last);
+            // Saved web pages may quote control characters in shell examples. They are
+            // valid decoded characters and the HTML tokenizer can handle them. Keep
+            // the existing NUL guard for binary data masquerading as HTML.
             if matches!(status, DecoderResult::Malformed(_, _))
-                || has_binary_controls(&self.buffer[..produced])
+                || self.buffer[..produced].contains(&0)
             {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, ENCODING_ERROR));
             }
@@ -601,6 +604,15 @@ mod tests {
                 .contains("unsupported_encoding"));
         }
         assert!(read(b"<p>x\0y</p>".as_slice()).is_err());
+    }
+
+    #[test]
+    fn accepts_control_characters_in_html_code_examples() {
+        let html = "<meta charset=utf-8><pre>first\u{2}\u{6}\u{7}last</pre>";
+        assert_eq!(
+            paragraphs(html.as_bytes(), 32_768),
+            ["first\u{2}\u{6}\u{7}last"]
+        );
     }
 
     #[test]

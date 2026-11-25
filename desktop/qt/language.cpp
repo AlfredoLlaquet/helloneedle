@@ -16,7 +16,7 @@ QTranslator *nativeSpanish = nullptr;
 const QHash<QByteArray, QString> &spanish()
 {
     static const QHash<QByteArray, QString> strings{
-        {"%1 documents scanned", "%1 documentos examinados"}, {"1 document scanned", "1 documento examinado"},
+        {"%1 files scanned", "%1 archivos examinados"}, {"1 file scanned", "1 archivo examinado"},
         {"%1 matches", "%1 coincidencias"}, {"1 match", "1 coincidencia"},
         {"%1 errors", "%1 errores"}, {"1 error", "1 error"},
         {"&File", "&Archivo"}, {"&Help", "A&yuda"}, {"&Language", "&Idioma"}, {"&Search", "&Buscar"},
@@ -150,6 +150,9 @@ QString workerError(const QJsonObject &event)
     };
     const QString details = event.value("message").toString().trimmed();
     if (active == "en" && !details.isEmpty()) return details;
-    return ui(errors.value(code, "The document could not be decoded."));
+    const QString category = ui(errors.value(code, "The document could not be decoded."));
+    if (details.contains(QStringLiteral("pdftotext"), Qt::CaseInsensitive))
+        return category + QLatin1Char('\n') + details;
+    return category;
 }
 }

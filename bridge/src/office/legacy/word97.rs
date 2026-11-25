@@ -9,9 +9,11 @@ use cfb::CompoundFile;
 use std::{fs::File, io::Read};
 
 mod properties;
+mod styles;
 #[cfg(test)]
 mod tests;
-use properties::{character_runs, grpprl, piece_properties, Visibility};
+use properties::{character_runs, grpprl, piece_properties, Properties, Visibility};
+use styles::{paragraphs, Styles};
 
 // Bound index allocations and the combined work of repeated references independently of file length.
 const MAX_RUNS: usize = 500_000;
@@ -133,8 +135,89 @@ fn project(word: &[u8], table: &[u8], out: &mut Output) -> Result<()> {
         u32_at(piece_table, 0)? == 0 && u32_at(piece_table, count * 4)? as usize >= main_chars,
         "corrupt_document: binary Word piece table misses the main story"
     );
+    let pieces = pieces(piece_table, count, main_chars, word, &groups)?;
+    let styles = Styles::read(table_part(pairs, 1, table)?)?;
+    let paragraphs = paragraphs(table_part(pairs, 13, table)?, word, &pieces)?;
+    let mut para_index = 0;
     let mut text = BodyText::new(out);
     let mut segments = 0;
+    let empty = Properties::default();
+    for piece in &pieces {
+        let mut start = piece.start;
+        let mut run = runs.partition_point(|r| r.end <= start);
+        while start < piece.end {
+            segments += 1;
+            ensure!(
+                segments <= MAX_RUNS * 3,
+                "resource_limit: binary Word formatting intersections"
+            );
+            // Paragraph ends use logical character positions; character formatting
+            // uses physical byte offsets. Both can divide this same piece.
+            let cp = piece.cp + (start - piece.start) / piece.width;
+            while paragraphs.get(para_index).is_some_and(|p| p.end_cp <= cp) {
+                para_index += 1;
+            }
+            let (mut until, paragraph_id) = match paragraphs.get(para_index) {
+                Some(p) => (
+                    start + (p.end_cp - cp).min((piece.end - start) / piece.width) * piece.width,
+                    p.style,
+                ),
+                None => (piece.end, 0),
+            };
+            while runs.get(run).is_some_and(|r| r.end <= start) {
+                run += 1;
+            }
+            let direct = match runs.get(run) {
+                Some(r) if r.start <= start => {
+                    until = until.min(r.end);
+                    &r.properties
+                }
+                Some(r) => {
+                    until = until.min(r.start);
+                    &empty
+                }
+                None => &empty,
+            };
+            ensure!(
+                until > start && (until - start) % piece.width == 0,
+                "corrupt_document: split binary Word character"
+            );
+            let paragraph = styles.flags(paragraph_id, 0)?;
+            let mut state = Visibility::from_style(paragraph);
+            direct.apply(&styles, paragraph, &mut state)?;
+            piece.properties.apply(&styles, paragraph, &mut state)?;
+            if !state.deleted() {
+                for chunk in word[start..until].chunks_exact(piece.width) {
+                    let unit = if piece.width == 1 {
+                        uncompress(chunk[0])
+                    } else {
+                        u16::from_le_bytes([chunk[0], chunk[1]])
+                    };
+                    text.unit(unit, state.hidden())?;
+                }
+            }
+            start = until;
+        }
+    }
+    text.finish()
+}
+
+struct Piece<'a> {
+    cp: usize,
+    start: usize,
+    end: usize,
+    width: usize,
+    properties: std::borrow::Cow<'a, Properties>,
+}
+
+fn pieces<'a>(
+    piece_table: &[u8],
+    count: usize,
+    main_chars: usize,
+    word: &[u8],
+    groups: &'a [Properties],
+) -> Result<Vec<Piece<'a>>> {
+    let mut pieces = Vec::with_capacity(count);
     for index in 0..count {
         let cp = u32_at(piece_table, index * 4)? as usize;
         let next = u32_at(piece_table, (index + 1) * 4)? as usize;
@@ -154,46 +237,21 @@ fn project(word: &[u8], table: &[u8], out: &mut Output) -> Result<()> {
             "corrupt_document: invalid compressed Word offset"
         );
         let width = if compressed { 1 } else { 2 };
-        let mut start = if compressed { encoded / 2 } else { encoded };
+        let start = if compressed { encoded / 2 } else { encoded };
         let end = start
             .checked_add((next.min(main_chars) - cp) * width)
             .ok_or_else(|| anyhow!("corrupt_document: binary Word piece range"))?;
         bytes(word, start, end - start)?;
-        let piece = piece_properties(u16_at(pcd, 6)?, &groups)?;
-        let mut run = runs.partition_point(|r| r.end <= start);
-        while start < end {
-            segments += 1;
-            ensure!(
-                segments <= MAX_RUNS * 2,
-                "resource_limit: binary Word formatting intersections"
-            );
-            let (until, base) = match runs.get(run) {
-                Some(r) if r.start <= start => {
-                    run += 1;
-                    (end.min(r.end), r.visibility)
-                }
-                Some(r) => (end.min(r.start), Visibility::default()),
-                None => (end, Visibility::default()),
-            };
-            ensure!(
-                (until - start) % width == 0,
-                "corrupt_document: split binary Word character"
-            );
-            let state = piece.over(base);
-            if !state.deleted() {
-                for chunk in word[start..until].chunks_exact(width) {
-                    let unit = if compressed {
-                        uncompress(chunk[0])
-                    } else {
-                        u16::from_le_bytes([chunk[0], chunk[1]])
-                    };
-                    text.unit(unit, state.hidden())?;
-                }
-            }
-            start = until;
-        }
+        let properties = piece_properties(u16_at(pcd, 6)?, groups)?;
+        pieces.push(Piece {
+            cp,
+            start,
+            end,
+            width,
+            properties,
+        });
     }
-    text.finish()
+    Ok(pieces)
 }
 
 // The file format specifies a subset of the Windows-1252 substitutions. In particular
