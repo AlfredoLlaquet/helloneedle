@@ -72,7 +72,10 @@ def write_pdf(path):
     for i, line in enumerate(lines):
         objects.append((f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 320 240] "
                         f"/Resources << /Font << /F1 3 0 R >> >> /Contents {5 + i*2} 0 R >>").encode("ascii"))
-        stream = f"BT /F1 14 Tf 32 168 Td ({line}) Tj ET\n".encode("ascii")
+        content = f"BT /F1 14 Tf 32 168 Td ({line}) Tj"
+        if i == 1:
+            content += " 0 -28 Td (This is the second line on this page.) Tj"
+        stream = (content + " ET\n").encode("ascii")
         objects.append(f"<< /Length {len(stream)} >>\nstream\n".encode("ascii") + stream + b"endstream")
     data = bytearray(b"%PDF-1.4\n")
     offsets = [0]

@@ -20,10 +20,10 @@ from document_fixtures import write_documents
 FULL = [
     "firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "wordAndOfficePreviews",
     "markupModes", "pdfNavigation", "optionsAndCancellation", "languageMenu", "helpAndCredits",
-    "statusBarLink", "scannedDocumentsAndErrors",
+    "statusBarLink", "scannedFilesAndErrors", "resultNavigation", "previewCentering", "performanceSettings", "documentViewsAndScope", "allErrorDetails",
 ]
 SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "statusBarLink",
-          "scannedDocumentsAndErrors", "compactWorkArea"]
+          "scannedFilesAndErrors", "compactWorkArea", "resultNavigation", "previewCentering", "performanceSettings"]
 
 
 def native_plugin():
@@ -38,6 +38,8 @@ def scenarios():
                 yield f"{language}-{appearance}-{suffix}", language, appearance, factor, (
                     FULL if factor == "1" else SCALED
                 )
+    yield "bulk-results", "en", "system", "1", ["bulkResultNavigation", "copyLongMatch"]
+    yield "document-pages", "en", "system", "1", ["documentPageBoundaries"]
     yield "directory-selection", "es", "system", "1", ["directorySelection"]
 
 
@@ -123,16 +125,22 @@ def run_case(tester, worker, docs, settings, directory, spec, plugin):
             log = log.decode("utf-8", "replace")
         log += "\nNative GUI scenario timed out.\n"
         code = 124
+    cases = []
+    if result_file.exists():
+        try:
+            report = ElementTree.parse(result_file)
+        except ElementTree.ParseError as exc:
+            log += f"\nIncomplete Qt test report: {exc}\n"
+            code = code or 1
+        else:
+            for test in report.iter("testcase"):
+                status = "failed" if test.find("failure") is not None or test.find("error") is not None else "passed"
+                if test.find("skipped") is not None:
+                    status = "skipped"
+                cases.append({"name": test.get("name"), "result": status})
     (directory / "test.log").write_text(log, encoding="utf-8")
     if code:
         print(log, flush=True)
-    cases = []
-    if result_file.exists():
-        for test in ElementTree.parse(result_file).iter("testcase"):
-            status = "failed" if test.find("failure") is not None or test.find("error") is not None else "passed"
-            if test.find("skipped") is not None:
-                status = "skipped"
-            cases.append({"name": test.get("name"), "result": status})
     evidence = directory / "appearance.json"
     screens = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(directory.glob("*.png"))}
     return {"scenario": name, "language": language, "appearance": appearance, "scale": factor,

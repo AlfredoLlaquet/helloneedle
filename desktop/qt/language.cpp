@@ -16,11 +16,28 @@ QTranslator *nativeSpanish = nullptr;
 const QHash<QByteArray, QString> &spanish()
 {
     static const QHash<QByteArray, QString> strings{
-        {"%1 documents scanned", "%1 documentos examinados"}, {"1 document scanned", "1 documento examinado"},
+        {"%1 files scanned", "%1 archivos examinados"}, {"1 file scanned", "1 archivo examinado"},
         {"%1 matches", "%1 coincidencias"}, {"1 match", "1 coincidencia"},
         {"%1 errors", "%1 errores"}, {"1 error", "1 error"},
         {"&File", "&Archivo"}, {"&Help", "A&yuda"}, {"&Language", "&Idioma"}, {"&Search", "&Buscar"},
-        {"About Hello Needle", "Acerca de Hello Needle"}, {"Additional file errors: %1", "Otros errores de archivo: %1"},
+        {"About Hello Needle", "Acerca de Hello Needle"},
+        {"View", "Vista"}, {"Result view", "Vista de resultados"},
+        {"File names", "Nombres de archivo"}, {"File paths", "Rutas de archivo"}, {"Folder tree", "Árbol de carpetas"},
+        {"Exclude subdirectories", "Excluir subcarpetas"},
+        {"Directory", "Directorio"}, {"Directory:", "Directorio:"},
+        {"Previous files", "Archivos anteriores"}, {"Next files", "Archivos siguientes"},
+        {"Files %1–%2 of %3", "Archivos %1–%2 de %3"},
+        {"Previous matches", "Coincidencias anteriores"}, {"Next matches", "Coincidencias siguientes"},
+        {"Errors %1–%2 of %3", "Errores %1–%2 de %3"},
+        {"Previous errors", "Errores anteriores"}, {"Next errors", "Errores siguientes"},
+        {"The temporary result store could not be used.", "No se ha podido acceder al almacenamiento temporal de resultados."},
+        {"Search input is too long.", "El texto de búsqueda es demasiado largo."},
+        {"Copy match", "Copiar coincidencia"}, {"Copying match…", "Copiando coincidencia…"},
+        {"Save match…", "Guardar coincidencia…"}, {"Saving match…", "Guardando coincidencia…"},
+        {"Saved match", "Coincidencia guardada"}, {"The matching text could not be saved.", "No se ha podido guardar el texto de la coincidencia."},
+        {"Copied match", "Coincidencia copiada"}, {"Previous part", "Parte anterior"}, {"Next part", "Parte siguiente"},
+        {"Showing part %1 of %2", "Parte %1 de %2"},
+        {"The matching text could not be copied.", "No se ha podido copiar el texto de la coincidencia."},
         {"Based on Clapgrep by Leopold Luley and contributors.", "Basado en Clapgrep, de Leopold Luley y sus colaboradores."},
         {"Browse…", "Examinar…"}, {"Cancel search", "Cancelar búsqueda"}, {"Cancel", "Cancelar"},
         {"Case sensitive", "Distinguir mayúsculas y minúsculas"}, {"Choose a folder", "Elegir una carpeta"},
@@ -36,6 +53,9 @@ const QHash<QByteArray, QString> &spanish()
         {"License files", "Archivos de licencia"}, {"License text", "Texto de la licencia"}, {"Licenses", "Licencias"},
         {"Loading page…", "Cargando página…"}, {"Loading preview…", "Cargando vista previa…"},
         {"Next", "Siguiente"}, {"Next page", "Página siguiente"},
+        {"Next document", "Documento siguiente"}, {"Next match", "Coincidencia siguiente"},
+        {"Previous match", "Coincidencia anterior"}, {"Previous document", "Documento anterior"},
+        {"%1 or %2", "%1 o %2"},
         {"Open TheCrumbs.org in your browser", "Abrir TheCrumbs.org en tu navegador"},
         {"Open original", "Abrir original"}, {"Open this file in its usual application.", "Abrir el archivo en su aplicación habitual."},
         {"Options", "Opciones"}, {"PDF page rendering requires Poppler (pdftoppm).", "La vista de páginas PDF requiere Poppler (pdftoppm)."},
@@ -50,7 +70,7 @@ const QHash<QByteArray, QString> &spanish()
         {"Search readable text or the saved HTML and Markdown markup.", "Buscar en el texto legible o en el código HTML y Markdown guardado."},
         {"Search results", "Resultados de la búsqueda"}, {"Search", "Buscar"}, {"Searching… %1", "Buscando… %1"},
         {"Select a result to read the passage.", "Selecciona un resultado para leer el pasaje."},
-        {"Show page", "Ver página"}, {"Show text", "Ver texto"}, {"Showing the first %1 matches.", "Se muestran las primeras %1 coincidencias."},
+        {"Show page", "Ver página"}, {"Show text", "Ver texto"},
         {"Source", "Código fuente"}, {"The PDF page could not be rendered.", "No se ha podido mostrar la página del PDF."},
         {"The license text could not be opened.", "No se ha podido abrir el texto de la licencia."},
         {"The original file could not be opened.", "No se ha podido abrir el archivo original."},
@@ -77,7 +97,14 @@ const QHash<QByteArray, QString> &spanish()
         {"The PDF has no searchable text layer.", "El PDF carece de una capa de texto que permita búsquedas."},
         {"The text encoding is unsupported.", "La codificación del texto no es compatible."},
         {"The document could not be decoded.", "No se ha podido interpretar el documento."},
-        {"Select folder", "Seleccionar carpeta"}, {"Look in:", "Buscar en:"}, {"Folder:", "Carpeta:"}
+        {"Select folder", "Seleccionar carpeta"}, {"Look in:", "Buscar en:"}, {"Folder:", "Carpeta:"},
+        {"Settings…", "Preferencias…"}, {"Settings", "Preferencias"},
+        {"Performance", "Rendimiento"}, {"Advanced", "Opciones avanzadas"},
+        {"Search workers", "Hilos de búsqueda"}, {"Automatic (1 worker)", "Automático (1 hilo)"},
+        {"Automatic (%1 workers)", "Automático (%1 hilos)"}, {"Automatic (%1)", "Automático (%1)"},
+        {"Simultaneous PDF conversions", "Conversiones simultáneas de PDF"},
+        {"Each PDF conversion uses one search worker.", "Cada conversión de PDF ocupa un hilo de búsqueda."},
+        {"Changes apply to the next search.", "Los cambios se aplican a la próxima búsqueda."}
     };
     return strings;
 }
@@ -120,16 +147,16 @@ QString locationLabel(const QJsonObject &loc, const QString &fallback)
 {
     if (loc.value("filename").toBool()) return ui("File name");
     if (loc.contains("cell")) return loc.value("sheet").toString() + QStringLiteral(" · ") + loc.value("cell").toString();
-    if (loc.contains("page")) return ui("Page %1").arg(loc.value("page").toInt());
-    if (loc.contains("slide")) return ui("Slide %1").arg(loc.value("slide").toInt());
+    if (loc.contains("page")) return ui("Page %1").arg(loc.value("page").toInteger());
+    if (loc.contains("slide")) return ui("Slide %1").arg(loc.value("slide").toInteger());
     if (loc.contains("table") && loc.contains("row") && loc.contains("column"))
-        return ui("Table %1, row %2, column %3").arg(loc.value("table").toInt()).arg(loc.value("row").toInt()).arg(loc.value("column").toInt());
-    if (loc.contains("line")) return ui("Line %1").arg(loc.value("line").toInt());
-    if (loc.contains("paragraph")) return ui("Paragraph %1").arg(loc.value("paragraph").toInt());
-    if (loc.value("role") == "paragraph") return ui("Paragraph %1").arg(loc.value("index").toInt() + 1);
-    if (loc.value("role") == "heading") return ui("Heading %1").arg(loc.value("index").toInt() + 1);
+        return ui("Table %1, row %2, column %3").arg(loc.value("table").toInteger()).arg(loc.value("row").toInteger()).arg(loc.value("column").toInteger());
+    if (loc.contains("line")) return ui("Line %1").arg(loc.value("line").toInteger());
+    if (loc.contains("paragraph")) return ui("Paragraph %1").arg(loc.value("paragraph").toInteger());
+    if (loc.value("role") == "paragraph") return ui("Paragraph %1").arg(quint64(loc.value("index").toInteger()) + 1);
+    if (loc.value("role") == "heading") return ui("Heading %1").arg(quint64(loc.value("index").toInteger()) + 1);
     if (active == "en" && !fallback.isEmpty()) return fallback;
-    return ui("Passage %1").arg(loc.value("index").toInt() + 1);
+    return ui("Passage %1").arg(quint64(loc.value("index").toInteger()) + 1);
 }
 
 QString workerError(const QJsonObject &event)
@@ -150,6 +177,9 @@ QString workerError(const QJsonObject &event)
     };
     const QString details = event.value("message").toString().trimmed();
     if (active == "en" && !details.isEmpty()) return details;
-    return ui(errors.value(code, "The document could not be decoded."));
+    const QString category = ui(errors.value(code, "The document could not be decoded."));
+    if (!details.isEmpty() && details != category)
+        return category + QLatin1Char('\n') + details;
+    return category;
 }
 }

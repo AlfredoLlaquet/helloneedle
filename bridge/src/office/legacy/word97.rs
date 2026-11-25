@@ -3,18 +3,31 @@
 //! Only current piece-table addresses are read. Fast-save remnants and other stories stay outside the text.
 
 use super::super::{paragraph_location, Output};
-use crate::{MAX_FILE_BYTES, MAX_TEXT_BYTES};
+use crate::MAX_TEXT_BYTES;
 use anyhow::{anyhow, bail, ensure, Result};
 use cfb::CompoundFile;
-use std::{fs::File, io::Read};
+use std::{
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+};
 
+mod compound;
 mod properties;
+mod styles;
 #[cfg(test)]
 mod tests;
-use properties::{character_runs, grpprl, piece_properties, Visibility};
+use properties::{character_runs, grpprl, piece_properties, Properties, Visibility};
+use styles::{paragraphs, Styles};
 
-// Bound index allocations and the combined work of repeated references independently of file length.
-const MAX_RUNS: usize = 500_000;
+// Only live format indexes need a storage budget. Total text processed is
+// independent of those indexes (one piece can cover millions of paragraphs).
+fn index_room<T>(entries: &[T]) -> Result<()> {
+    ensure!(
+        entries.len() < MAX_TEXT_BYTES / std::mem::size_of::<T>(),
+        "resource_limit: binary Word index working memory"
+    );
+    Ok(())
+}
 
 fn bytes(data: &[u8], start: usize, len: usize) -> Result<&[u8]> {
     start
@@ -29,29 +42,72 @@ fn u32_at(data: &[u8], at: usize) -> Result<u32> {
     Ok(u32::from_le_bytes(bytes(data, at, 4)?.try_into()?))
 }
 
-fn stream(cfb: &mut CompoundFile<File>, name: &str, available: u64) -> Result<Vec<u8>> {
-    let stream = cfb
-        .open_stream(name)
-        .map_err(|_| anyhow!("corrupt_document: missing or invalid {name} stream"))?;
-    let len = stream.len();
-    ensure!(
-        len <= available,
-        "resource_limit: compound document streams"
-    );
-    let mut data = Vec::new();
-    stream
-        .take(len + 1)
-        .read_to_end(&mut data)
-        .map_err(|_| anyhow!("corrupt_document: invalid {name} stream"))?;
-    ensure!(
-        data.len() as u64 == len,
-        "corrupt_document: incomplete {name} stream"
-    );
-    Ok(data)
+trait RandomRead: Read + Seek {}
+impl<R: Read + Seek> RandomRead for R {}
+
+/// Word stores its text, formatting pages and table parts at independent
+/// offsets. Keep the compound streams seekable and request only active data.
+struct Indexed<'a> {
+    source: &'a mut dyn RandomRead,
+    len: u64,
+    position: u64,
+}
+impl<'a> Indexed<'a> {
+    fn new(source: &'a mut dyn RandomRead) -> Result<Self> {
+        let len = source.seek(SeekFrom::End(0))?;
+        Ok(Self {
+            source,
+            len,
+            position: len,
+        })
+    }
+    fn fill(&mut self, offset: usize, target: &mut [u8]) -> Result<()> {
+        ensure!(
+            (offset as u64)
+                .checked_add(target.len() as u64)
+                .is_some_and(|end| end <= self.len),
+            "corrupt_document: binary Word offset outside stream"
+        );
+        if self.position != offset as u64 {
+            self.position = self.source.seek(SeekFrom::Start(offset as u64))?;
+        }
+        for chunk in target.chunks_mut(64 * 1024) {
+            crate::search::checkpoint()?;
+            self.source
+                .read_exact(chunk)
+                .map_err(|_| anyhow!("corrupt_document: incomplete binary Word stream"))?;
+            self.position += chunk.len() as u64;
+        }
+        Ok(())
+    }
+    fn word(&mut self, at: usize) -> Result<u16> {
+        let mut data = [0; 2];
+        self.fill(at, &mut data)?;
+        Ok(u16::from_le_bytes(data))
+    }
+    fn part(&mut self, at: usize, size: usize) -> Result<Vec<u8>> {
+        if size == 0 {
+            return Ok(Vec::new());
+        }
+        ensure!(
+            size <= MAX_TEXT_BYTES,
+            "resource_limit: binary Word index working memory"
+        );
+        ensure!(
+            (at as u64)
+                .checked_add(size as u64)
+                .is_some_and(|end| end <= self.len),
+            "corrupt_document: binary Word index outside stream"
+        );
+        let mut data = vec![0; size];
+        self.fill(at, &mut data)?;
+        Ok(data)
+    }
 }
 
 /// A false result selects the older Word decoder. Recognized modern files keep their precise errors.
-pub(super) fn read(file: File, out: &mut Output) -> Result<bool> {
+pub(super) fn read(mut file: File, out: &mut Output) -> Result<bool> {
+    compound::preflight(&mut file)?;
     let mut cfb = CompoundFile::open(file)
         .map_err(|_| anyhow!("corrupt_document: invalid compound document"))?;
     if cfb.is_stream("/EncryptionInfo") && cfb.is_stream("/EncryptedPackage") {
@@ -61,9 +117,12 @@ pub(super) fn read(file: File, out: &mut Output) -> Result<bool> {
         cfb.is_stream("/WordDocument"),
         "unsupported_document: compound file lacks a Word document"
     );
-    let word = stream(&mut cfb, "/WordDocument", MAX_FILE_BYTES)?;
-    let ident = u16_at(&word, 0)?;
-    let version = u16_at(&word, 2)?;
+    let mut main_stream = cfb
+        .open_stream("/WordDocument")
+        .map_err(|_| anyhow!("corrupt_document: invalid WordDocument stream"))?;
+    let mut word = Indexed::new(&mut main_stream)?;
+    let ident = word.word(0)?;
+    let version = word.word(2)?;
     if matches!(ident, 0xa5db | 0xa5dc) || (ident == 0xa5ec && version < 0x00c1) {
         return Ok(false);
     }
@@ -71,42 +130,50 @@ pub(super) fn read(file: File, out: &mut Output) -> Result<bool> {
         ident == 0xa5ec && matches!(version, 0x00c1 | 0x00d9 | 0x0101 | 0x010c | 0x0112),
         "unsupported_document: unrecognized binary Word version"
     );
-    let flags = u16_at(&word, 10)?;
+    let flags = word.word(10)?;
     ensure!(flags & 0x8100 == 0, "encrypted_document: binary Word");
     let table_name = if flags & 0x0200 != 0 {
         "/1Table"
     } else {
         "/0Table"
     };
-    let table = stream(&mut cfb, table_name, MAX_FILE_BYTES - word.len() as u64)?;
-    project(&word, &table, out)?;
+    let mut table_stream = cfb
+        .open_stream(table_name)
+        .map_err(|_| anyhow!("corrupt_document: missing or invalid {table_name} stream"))?;
+    project_streams(&mut word, &mut Indexed::new(&mut table_stream)?, out)?;
     Ok(true)
 }
 
 // FibRgFcLcb97 lists a stream offset and byte count for each indexed structure.
-fn table_part<'a>(pairs: &[u8], index: usize, table: &'a [u8]) -> Result<&'a [u8]> {
+fn table_part(pairs: &[u8], index: usize, table: &mut Indexed) -> Result<Vec<u8>> {
     let entry = bytes(pairs, index * 8, 8)?;
-    let size = u32_at(entry, 4)? as usize;
-    if size == 0 {
-        return Ok(&[]);
-    }
-    bytes(table, u32_at(entry, 0)? as usize, size)
+    table.part(u32_at(entry, 0)? as usize, u32_at(entry, 4)? as usize)
 }
 
+#[cfg(test)]
 fn project(word: &[u8], table: &[u8], out: &mut Output) -> Result<()> {
-    let lw = 34 + usize::from(u16_at(word, 32)?) * 2;
-    let lw_size = usize::from(u16_at(word, lw)?) * 4;
-    let longs = bytes(word, lw + 2, lw_size)?;
-    let main_chars = u32_at(longs, 12)? as usize;
+    project_streams(
+        &mut Indexed::new(&mut std::io::Cursor::new(word))?,
+        &mut Indexed::new(&mut std::io::Cursor::new(table))?,
+        out,
+    )
+}
+
+fn project_streams(word: &mut Indexed, table: &mut Indexed, out: &mut Output) -> Result<()> {
+    let lw = 34 + usize::from(word.word(32)?) * 2;
+    let lw_size = usize::from(word.word(lw)?) * 4;
     ensure!(
-        main_chars <= MAX_TEXT_BYTES,
-        "resource_limit: binary Word character count"
+        lw_size >= 16,
+        "corrupt_document: truncated Word long header"
     );
+    let mut main_chars = [0; 4];
+    word.fill(lw + 2 + 12, &mut main_chars)?;
+    let main_chars = u32::from_le_bytes(main_chars) as usize;
     let fc = lw + 2 + lw_size;
-    let pairs = bytes(word, fc + 2, usize::from(u16_at(word, fc)?) * 8)?;
-    let clx = table_part(pairs, 33, table)?;
-    let chpx = table_part(pairs, 12, table)?;
-    let runs = character_runs(chpx, word)?;
+    let pair_size = usize::from(word.word(fc)?) * 8;
+    let pairs = word.part(fc + 2, pair_size)?;
+    let clx = table_part(&pairs, 33, table)?;
+    let runs = character_runs(&table_part(&pairs, 12, table)?, word)?;
     let mut pos = 0;
     let mut groups = Vec::new();
     while clx.get(pos) == Some(&1) {
@@ -114,27 +181,110 @@ fn project(word: &[u8], table: &[u8], out: &mut Output) -> Result<()> {
             groups.len() < 32768,
             "resource_limit: binary Word property groups"
         );
-        let size = usize::from(u16_at(clx, pos + 1)?);
-        groups.push(grpprl(bytes(clx, pos + 3, size)?)?);
+        let size = usize::from(u16_at(&clx, pos + 1)?);
+        groups.push(grpprl(bytes(&clx, pos + 3, size)?)?);
         pos += 3 + size;
     }
     ensure!(
         clx.get(pos) == Some(&2),
         "corrupt_document: missing binary Word piece table"
     );
-    let piece_table = bytes(clx, pos + 5, u32_at(clx, pos + 1)? as usize)?;
+    let piece_table = bytes(&clx, pos + 5, u32_at(&clx, pos + 1)? as usize)?;
     ensure!(
         piece_table.len() >= 4 && (piece_table.len() - 4) % 12 == 0,
         "corrupt_document: invalid binary Word piece table"
     );
     let count = (piece_table.len() - 4) / 12;
-    ensure!(count <= MAX_RUNS, "resource_limit: binary Word piece count");
     ensure!(
         u32_at(piece_table, 0)? == 0 && u32_at(piece_table, count * 4)? as usize >= main_chars,
         "corrupt_document: binary Word piece table misses the main story"
     );
+    let pieces = pieces(piece_table, count, main_chars, word.len, &groups)?;
+    drop(clx);
+    let styles = Styles::read(&table_part(&pairs, 1, table)?)?;
+    let paragraphs = paragraphs(&table_part(&pairs, 13, table)?, word, &pieces)?;
+    let mut para_index = 0;
     let mut text = BodyText::new(out);
-    let mut segments = 0;
+    let mut buffer = vec![0; 64 * 1024];
+    let empty = Properties::default();
+    for piece in &pieces {
+        let mut start = piece.start;
+        let mut run = runs.partition_point(|r| r.end <= start);
+        while start < piece.end {
+            crate::search::checkpoint()?;
+            // Paragraph ends use logical character positions; character formatting
+            // uses physical byte offsets. Both can divide this same piece.
+            let cp = piece.cp + (start - piece.start) / piece.width;
+            while paragraphs.get(para_index).is_some_and(|p| p.end_cp <= cp) {
+                para_index += 1;
+            }
+            let (mut until, paragraph_id) = match paragraphs.get(para_index) {
+                Some(p) => (
+                    start + (p.end_cp - cp).min((piece.end - start) / piece.width) * piece.width,
+                    p.style,
+                ),
+                None => (piece.end, 0),
+            };
+            while runs.get(run).is_some_and(|r| r.end <= start) {
+                run += 1;
+            }
+            let direct = match runs.get(run) {
+                Some(r) if r.start <= start => {
+                    until = until.min(r.end);
+                    &r.properties
+                }
+                Some(r) => {
+                    until = until.min(r.start);
+                    &empty
+                }
+                None => &empty,
+            };
+            ensure!(
+                until > start && (until - start) % piece.width == 0,
+                "corrupt_document: split binary Word character"
+            );
+            let paragraph = styles.flags(paragraph_id, 0)?;
+            let mut state = Visibility::from_style(paragraph);
+            direct.apply(&styles, paragraph, &mut state)?;
+            piece.properties.apply(&styles, paragraph, &mut state)?;
+            if !state.deleted() {
+                let mut cursor = start;
+                while cursor < until {
+                    let n = buffer.len().min(until - cursor);
+                    word.fill(cursor, &mut buffer[..n])?;
+                    for chunk in buffer[..n].chunks_exact(piece.width) {
+                        let unit = if piece.width == 1 {
+                            uncompress(chunk[0])
+                        } else {
+                            u16::from_le_bytes([chunk[0], chunk[1]])
+                        };
+                        text.unit(unit, state.hidden())?;
+                    }
+                    cursor += n;
+                }
+            }
+            start = until;
+        }
+    }
+    text.finish()
+}
+
+struct Piece<'a> {
+    cp: usize,
+    start: usize,
+    end: usize,
+    width: usize,
+    properties: std::borrow::Cow<'a, Properties>,
+}
+
+fn pieces<'a>(
+    piece_table: &[u8],
+    count: usize,
+    main_chars: usize,
+    word_len: u64,
+    groups: &'a [Properties],
+) -> Result<Vec<Piece<'a>>> {
+    let mut pieces = Vec::new();
     for index in 0..count {
         let cp = u32_at(piece_table, index * 4)? as usize;
         let next = u32_at(piece_table, (index + 1) * 4)? as usize;
@@ -154,46 +304,25 @@ fn project(word: &[u8], table: &[u8], out: &mut Output) -> Result<()> {
             "corrupt_document: invalid compressed Word offset"
         );
         let width = if compressed { 1 } else { 2 };
-        let mut start = if compressed { encoded / 2 } else { encoded };
+        let start = if compressed { encoded / 2 } else { encoded };
         let end = start
             .checked_add((next.min(main_chars) - cp) * width)
             .ok_or_else(|| anyhow!("corrupt_document: binary Word piece range"))?;
-        bytes(word, start, end - start)?;
-        let piece = piece_properties(u16_at(pcd, 6)?, &groups)?;
-        let mut run = runs.partition_point(|r| r.end <= start);
-        while start < end {
-            segments += 1;
-            ensure!(
-                segments <= MAX_RUNS * 2,
-                "resource_limit: binary Word formatting intersections"
-            );
-            let (until, base) = match runs.get(run) {
-                Some(r) if r.start <= start => {
-                    run += 1;
-                    (end.min(r.end), r.visibility)
-                }
-                Some(r) => (end.min(r.start), Visibility::default()),
-                None => (end, Visibility::default()),
-            };
-            ensure!(
-                (until - start) % width == 0,
-                "corrupt_document: split binary Word character"
-            );
-            let state = piece.over(base);
-            if !state.deleted() {
-                for chunk in word[start..until].chunks_exact(width) {
-                    let unit = if compressed {
-                        uncompress(chunk[0])
-                    } else {
-                        u16::from_le_bytes([chunk[0], chunk[1]])
-                    };
-                    text.unit(unit, state.hidden())?;
-                }
-            }
-            start = until;
-        }
+        ensure!(
+            end as u64 <= word_len,
+            "corrupt_document: binary Word piece outside stream"
+        );
+        let properties = piece_properties(u16_at(pcd, 6)?, groups)?;
+        index_room(&pieces)?;
+        pieces.push(Piece {
+            cp,
+            start,
+            end,
+            width,
+            properties,
+        });
     }
-    text.finish()
+    Ok(pieces)
 }
 
 // The file format specifies a subset of the Windows-1252 substitutions. In particular
@@ -211,16 +340,16 @@ fn uncompress(b: u8) -> u16 {
     }
 }
 
-struct BodyText<'a> {
-    out: &'a mut Output,
+struct BodyText<'a, 'visit> {
+    out: &'a mut Output<'visit>,
     paragraph: String,
     number: usize,
     high: Option<u16>,
     fields: Vec<bool>,
     instructions: usize,
 }
-impl<'a> BodyText<'a> {
-    fn new(out: &'a mut Output) -> Self {
+impl<'a, 'visit> BodyText<'a, 'visit> {
+    fn new(out: &'a mut Output<'visit>) -> Self {
         Self {
             out,
             paragraph: String::new(),
@@ -294,7 +423,7 @@ impl<'a> BodyText<'a> {
             }
         }
         ensure!(
-            self.paragraph.len() <= MAX_TEXT_BYTES - self.out.bytes,
+            self.paragraph.len() <= MAX_TEXT_BYTES,
             "resource_limit: extracted binary Word text"
         );
         Ok(())

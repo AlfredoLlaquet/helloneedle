@@ -3,7 +3,10 @@
 #include "buttonicons.h"
 #include "credits.h"
 #include "language.h"
+#include "performancesettings.h"
 #include "previewpane.h"
+#include "resultnavigation.h"
+#include "resultbrowser.h"
 #include "searchstatus.h"
 #include <QActionGroup>
 #include <QApplication>
@@ -11,16 +14,13 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QGridLayout>
-#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenuBar>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScreen>
 #include <QSettings>
@@ -29,9 +29,9 @@
 #include <QStatusBar>
 #include <QTextBrowser>
 #include <QToolButton>
-#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <cmath>
+#include <limits>
 
 namespace hn {
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), worker(this)
@@ -58,6 +58,7 @@ void MainWindow::buildControls()
         auto *widget = new QLineEdit(body);
         widget->setObjectName(id);
         widget->setMinimumWidth(35);
+        widget->setMaxLength(std::numeric_limits<int>::max());
         return widget;
     };
     folderEdit = line("folderEdit");
@@ -118,6 +119,7 @@ void MainWindow::buildControls()
     hidden = checkbox("hiddenCheck", 1, 0);
     ignored = checkbox("ignoredCheck", 1, 1);
     filenames = checkbox("filenamesCheck", 2, 0);
+    excludeSubdirectories = checkbox("excludeSubdirectoriesCheck", 2, 1);
     patternEdit = line("pathPatternEdit");
     patternLabel = new QLabel(optionsPane);
     patternLabel->setBuddy(patternEdit);
@@ -137,14 +139,19 @@ void MainWindow::buildControls()
     QFont heading = resultsLabel->font();
     heading.setBold(true);
     resultsLabel->setFont(heading);
-    leftLayout->addWidget(resultsLabel);
-    results = new QTreeWidget(left);
-    results->setObjectName("resultsView");
-    results->setHeaderHidden(true);
-    results->setUniformRowHeights(true);
-    results->setTextElideMode(Qt::ElideRight);
-    results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    results->setMinimumSize(110, 50);
+    auto *resultHeader = new QHBoxLayout;
+    resultHeader->addWidget(resultsLabel);
+    resultView = new QComboBox(left);
+    resultView->setObjectName("resultViewCombo");
+    resultView->addItem("", "names");
+    resultView->addItem("", "paths");
+    resultView->addItem("", "tree");
+    resultHeader->addWidget(resultView);
+    resultHeader->addStretch();
+    leftLayout->addLayout(resultHeader);
+    results = new ResultBrowser(left);
+    navigation = new ResultNavigation(results, left);
+    leftLayout->addWidget(navigation);
     leftLayout->addWidget(results);
     preview = new PreviewPane(splitter);
     splitter->addWidget(left);
@@ -155,7 +162,7 @@ void MainWindow::buildControls()
     setCentralWidget(body);
     status = new SearchStatus(statusBar());
     statusBar()->addPermanentWidget(status, 1);
-    connect(status->detailsButton(), &QPushButton::clicked, this, &MainWindow::showErrors);
+    connect(status->detailsButton(), &QPushButton::clicked, results, &ResultBrowser::showErrors);
     connect(browse, &QPushButton::clicked, this, &MainWindow::chooseFolder);
     connect(search, &QPushButton::clicked, this, &MainWindow::startSearch);
     connect(cancel, &QPushButton::clicked, this, &MainWindow::cancelSearch);
@@ -163,7 +170,23 @@ void MainWindow::buildControls()
     connect(folderEdit, &QLineEdit::returnPressed, this, [this]{ queryEdit->setFocus(); });
     connect(patternEdit, &QLineEdit::returnPressed, this, &MainWindow::startSearch);
     connect(options, &QToolButton::toggled, optionsPane, &QWidget::setVisible);
-    connect(results, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item){ displayMatch(item); });
+    results->selectionChanged = [this](const QJsonObject &match) {
+        openAction->setEnabled(!match.isEmpty());
+        if (match.isEmpty()) preview->clear();
+        else preview->showMatch(match);
+    };
+    results->storageFailure = [this](const QString &message) {
+        count = results->count();
+        errors = results->errors();
+        failure = message;
+        state = State::Error;
+        worker.stop();
+        refreshStatus();
+    };
+    connect(resultView, &QComboBox::currentIndexChanged, this, [this](int index) {
+        results->setOrder(index == 2 ? ResultOrder::Tree : index == 1 ? ResultOrder::Paths : ResultOrder::Names);
+        QSettings().setValue("results/view", resultView->currentData());
+    });
 }
 
 void MainWindow::buildMenus()
@@ -186,6 +209,8 @@ void MainWindow::buildMenus()
     folderAction->setShortcut(QKeySequence::Open);
     openAction = action(fileMenu, "openAction", [this]{ preview->openOriginal(); });
     openAction->setEnabled(false);
+    settingsAction = action(fileMenu, "settingsAction", [this]{ showPerformanceSettings(this); });
+    settingsAction->setMenuRole(QAction::NoRole);
     fileMenu->addSeparator();
     quitAction = action(fileMenu, "quitAction", [this]{ close(); });
     quitAction->setShortcut(QKeySequence::Quit);
@@ -220,6 +245,8 @@ void MainWindow::readSettings()
     hidden->setChecked(settings.value("search/hidden", false).toBool());
     ignored->setChecked(settings.value("search/ignored", false).toBool());
     filenames->setChecked(settings.value("search/filenames", false).toBool());
+    excludeSubdirectories->setChecked(settings.value("search/excludeSubdirectories", false).toBool());
+    resultView->setCurrentIndex(qMax(0, resultView->findData(settings.value("results/view", "names"))));
     patternEdit->setText(settings.value("search/pathPattern").toString());
     options->setChecked(settings.value("window/options", false).toBool());
     mode->setCurrentIndex(mode->findData(settings.value("search/mode", "document")));
@@ -243,6 +270,7 @@ void MainWindow::writeSettings()
     settings.setValue("search/hidden", hidden->isChecked());
     settings.setValue("search/ignored", ignored->isChecked());
     settings.setValue("search/filenames", filenames->isChecked());
+    settings.setValue("search/excludeSubdirectories", excludeSubdirectories->isChecked());
     settings.setValue("search/pathPattern", patternEdit->text());
     settings.setValue("window/options", options->isChecked());
     settings.setValue("window/geometry", saveGeometry());
@@ -275,7 +303,8 @@ void MainWindow::selectLanguage(const QString &code)
     QSettings().setValue("interface/language", code);
     setLanguage(code);
     retranslate();
-    if (auto *item = results->currentItem()) displayMatch(item);
+    const auto match = results->selectedMatch();
+    if (!match.isEmpty()) preview->showMatch(match);
 }
 
 void MainWindow::retranslate()
@@ -301,11 +330,17 @@ void MainWindow::retranslate()
     hidden->setText(ui("Include hidden files"));
     ignored->setText(ui("Include ignored files"));
     filenames->setText(ui("Search file names"));
+    excludeSubdirectories->setText(ui("Exclude subdirectories"));
     patternLabel->setText(ui("Path filter"));
     patternEdit->setAccessibleName(ui("Path filter"));
     patternEdit->setPlaceholderText(ui("For example, *.md"));
     resultsLabel->setText(ui("Results"));
-    results->setAccessibleName(ui("Search results"));
+    resultView->setAccessibleName(ui("Result view"));
+    resultView->setToolTip(ui("Result view"));
+    resultView->setItemText(0, ui("File names"));
+    resultView->setItemText(1, ui("File paths"));
+    resultView->setItemText(2, ui("Folder tree"));
+    navigation->retranslate();
     status->retranslate();
     fileMenu->setTitle(ui("&File"));
     searchMenu->setTitle(ui("&Search"));
@@ -313,6 +348,7 @@ void MainWindow::retranslate()
     helpMenu->setTitle(ui("&Help"));
     folderAction->setText(ui("Choose folder…"));
     openAction->setText(ui("Open original"));
+    settingsAction->setText(ui("Settings…"));
     quitAction->setText(ui("Quit"));
     focusAction->setText(ui("Focus search field"));
     searchAction->setText(ui("Search"));
@@ -321,11 +357,7 @@ void MainWindow::retranslate()
     licensesAction->setText(ui("Licenses"));
     englishAction->setChecked(currentLanguage() == "en");
     spanishAction->setChecked(currentLanguage() == "es");
-    for (auto *group : groups)
-        for (int i = 0; i < group->childCount(); ++i) {
-            auto *item = group->child(i);
-            item->setText(0, matchLabel(item->data(0, Qt::UserRole).toJsonObject()));
-        }
+    results->retranslate();
     preview->retranslate();
     refreshStatus();
 }
@@ -334,15 +366,13 @@ void MainWindow::startSearch()
 {
     worker.stop();
     preview->clear();
-    groups.clear();
-    results->clear();
     openAction->setEnabled(false);
-    problems.clear();
     failure.clear();
     count = 0;
-    documentsScanned = 0;
+    filesScanned = 0;
     errors = 0;
-    truncated = false;
+    results->reset();
+    if (!failure.isEmpty()) return;
     if (queryEdit->text().isEmpty() || folderEdit->text().isEmpty()) {
         state = State::Error;
         failure = queryEdit->text().isEmpty() ? ui("Enter a word or phrase.") : ui("Choose a folder.");
@@ -352,23 +382,26 @@ void MainWindow::startSearch()
     }
     state = State::Searching;
     refreshStatus();
-    const QJsonObject request{{"folder", QDir::fromNativeSeparators(folderEdit->text())}, {"query", queryEdit->text()},
+    QJsonObject request{{"folder", QDir::fromNativeSeparators(folderEdit->text())}, {"query", queryEdit->text()},
         {"regex", regex->isChecked()}, {"caseSensitive", respectCase->isChecked()},
         {"hidden", hidden->isChecked()}, {"ignored", ignored->isChecked()}, {"filenames", filenames->isChecked()},
+        {"excludeSubdirectories", excludeSubdirectories->isChecked()},
         {"pathPattern", patternEdit->text()}, {"mode", mode->currentData().toString()}};
+    applyPerformanceSettings(request);
     worker.start("search", request, [this](const QJsonObject &data) {
         const auto type = data.value("type").toString();
         if (type == "progress" || type == "done")
-            documentsScanned = data.value("documentsScanned").toInteger(documentsScanned);
-        if (type == "match") addMatch(data);
+            filesScanned = data.value("files").toInteger(data.value("documentsScanned").toInteger(filesScanned));
+        if (type == "match") { results->append(data); count = results->count(); }
+        else if (type == "discard") { results->discard(data); count = results->count(); }
         else if (type == "error") {
-            ++errors;
-            if (problems.size() < 200) problems.append(data);
+            results->appendError(data);
+            errors = results->errors();
             const auto code = data.value("code").toString();
             if (code == "query" || code == "folder" || code == "request") failure = workerError(data);
         } else if (type == "done") {
             count = data.value("count").toInteger(count);
-            truncated = data.value("truncated").toBool();
+            results->settle();
             state = failure.isEmpty() ? State::Completed : State::Error;
         }
         if (type != "match" || count % 64 == 1) refreshStatus();
@@ -387,47 +420,10 @@ void MainWindow::cancelSearch()
 {
     if (state != State::Searching) return;
     worker.stop();
+    results->settle();
+    if (state == State::Error) return;
     state = State::Canceled;
     refreshStatus();
-}
-
-QString MainWindow::matchLabel(const QJsonObject &match) const
-{
-    const auto description = locationLabel(match.value("location").toObject(), match.value("label").toString());
-    QString snippet = match.value("text").toString();
-    snippet.replace(QLatin1Char('\n'), QLatin1Char(' '));
-    return description.isEmpty() ? snippet : description + QStringLiteral("   ") + snippet;
-}
-
-void MainWindow::addMatch(const QJsonObject &match)
-{
-    ++count;
-    QString id = match.value("pathBytes").toString();
-    if (id.isEmpty()) id = match.value("path").toString();
-    auto *group = groups.value(id);
-    if (!group) {
-        group = new QTreeWidgetItem(results, {match.value("displayPath").toString()});
-        group->setToolTip(0, match.value("path").toString());
-        QFont groupFont = results->font();
-        groupFont.setBold(true);
-        group->setFont(0, groupFont);
-        groups.insert(id, group);
-    }
-    auto *item = new QTreeWidgetItem(group, {matchLabel(match)});
-    item->setData(0, Qt::UserRole, match);
-    item->setToolTip(0, match.value("text").toString());
-    if (count == 1) {
-        group->setExpanded(true);
-        results->setCurrentItem(item);
-    }
-}
-
-void MainWindow::displayMatch(QTreeWidgetItem *item)
-{
-    const auto match = item ? item->data(0, Qt::UserRole).toJsonObject() : QJsonObject();
-    openAction->setEnabled(!match.isEmpty());
-    if (match.isEmpty()) preview->clear();
-    else preview->showMatch(match);
 }
 
 void MainWindow::refreshStatus()
@@ -436,8 +432,9 @@ void MainWindow::refreshStatus()
     cancel->setEnabled(active);
     cancelAction->setEnabled(active);
     search->setEnabled(!active);
-    const QString scanned = documentsScanned == 1 ? ui("1 document scanned")
-                                                 : ui("%1 documents scanned").arg(documentsScanned);
+    navigation->setEnabled(count > 0);
+    const QString scanned = filesScanned == 1 ? ui("1 file scanned")
+                                                 : ui("%1 files scanned").arg(filesScanned);
     const QString matches = count == 1 ? ui("1 match") : ui("%1 matches").arg(count);
     const QString counts = scanned + QStringLiteral(" · ") + matches;
     QString message;
@@ -447,40 +444,20 @@ void MainWindow::refreshStatus()
     case State::Canceled: message = ui("Search canceled.") + QStringLiteral(" ") + counts; break;
     case State::Error: message = failure; break;
     case State::Completed:
-        message = truncated ? scanned + QStringLiteral(" · ") + ui("Showing the first %1 matches.").arg(count) : counts;
+        message = counts;
         break;
     }
     status->setMessage(message, errors);
 }
 
-void MainWindow::showErrors()
-{
-    QDialog dialog(this);
-    dialog.setWindowTitle(ui("Search details"));
-    auto *layout = new QVBoxLayout(&dialog);
-    auto *content = new QPlainTextEdit(&dialog);
-    content->setReadOnly(true);
-    QStringList messages;
-    for (const auto &error : problems) {
-        const auto path = error.value("path").toString();
-        messages << (path.isEmpty() ? workerError(error) : path + QStringLiteral("\n") + workerError(error));
-    }
-    if (errors > problems.size()) messages << ui("Additional file errors: %1").arg(errors - problems.size());
-    content->setPlainText(messages.join(QStringLiteral("\n\n")));
-    layout->addWidget(content);
-    auto *buttons = new QDialogButtonBox(&dialog);
-    buttons->addButton(ui("Close"), QDialogButtonBox::RejectRole);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-    dialog.resize(590, 360);
-    dialog.exec();
-}
-
 void MainWindow::adaptLayout()
 {
-    if (!splitter) return;
+    if (!preview) return;
     const auto orientation = width() < 630 ? Qt::Vertical : Qt::Horizontal;
     if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
+    constexpr int previewGap = 24;
+    preview->layout()->setContentsMargins(orientation == Qt::Horizontal ? previewGap : 0,
+                                         orientation == Qt::Vertical ? previewGap : 0, 0, 0);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)

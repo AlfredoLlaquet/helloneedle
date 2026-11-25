@@ -1,0 +1,136 @@
+name: FreeBSD development package
+
+on:
+  push:
+    branches: [development]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: FreeBSD release used by the full native build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build, install and test on FreeBSD ${{ inputs.release || '15.1' }} amd64
+    if: inputs.release != '' || github.ref == 'refs/heads/development'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '2'
+      HN_FREEBSD_RELEASE: ${{ inputs.release || '15.1' }}
+      HN_DEVELOPMENT: ${{ inputs.release == '' && '1' || '0' }}
+    steps:
+      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: ${{ env.HN_FREEBSD_RELEASE }}
+          arch: x86_64
+          cpu: '4'
+          mem: '8192'
+          sync: rsync
+          copyback: 'true'
+          envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA GITHUB_RUN_NUMBER GITHUB_RUN_ATTEMPT CARGO_BUILD_JOBS HN_FREEBSD_RELEASE HN_DEVELOPMENT'
+          prepare: |
+            set -eu
+            pkg install -y git cmake ninja rust sqlite3 qt6-base qt6-svg qt6-translations poppler-utils antiword python3 \
+              xorg-vfbserver openbox dbus dejavu
+            dbus-uuidgen --ensure
+          run: |
+            set -eu
+            test "$(freebsd-version -u | cut -d- -f1)" = "$HN_FREEBSD_RELEASE"
+            test "$(pkg config ABI)" = "FreeBSD:${HN_FREEBSD_RELEASE%%.*}:amd64"
+            resultdir=$PWD
+            pw useradd -n hnbuild -m -s /bin/sh
+            cd /home/hnbuild
+            su hnbuild -c 'git clone --no-checkout "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" source'
+            cd source
+            su hnbuild -c 'git fetch origin "$GITHUB_SHA" && git checkout --detach "$GITHUB_SHA"'
+            result=0
+            su hnbuild -c 'set -eu -o pipefail
+              mkdir -p native-out/evidence
+              set --
+              if [ "$HN_DEVELOPMENT" = 1 ]; then
+                set -- --freebsd-preview "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_ATTEMPT"
+              fi
+              python3 -u packaging/native_ci.py build "$@" 2>&1 | tee native-out/evidence/build.log' || result=$?
+            if [ "$result" -eq 0 ]; then
+              pkg add native-out/packages/*.pkg || result=$?
+            fi
+            if [ "$result" -eq 0 ] && [ "$HN_DEVELOPMENT" = 1 ]; then
+              su hnbuild -c 'set -eu
+                product=$(/usr/local/bin/helloneedle-worker --version)
+                product=${product##* }
+                preview=$(pkg query "%v" helloneedle)
+                stable=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0)
+                test "$preview" = "$product.a${GITHUB_RUN_NUMBER}_${GITHUB_RUN_ATTEMPT}"
+                next_attempt="$product.a${GITHUB_RUN_NUMBER}_$((GITHUB_RUN_ATTEMPT + 1))"
+                next_run="$product.a$((GITHUB_RUN_NUMBER + 1))_1"
+                test "$(pkg version -t "${stable#v}" "$preview")" = "<"
+                test "$(pkg version -t "$preview" "$next_attempt")" = "<"
+                test "$(pkg version -t "$next_attempt" "$next_run")" = "<"
+                test "$(pkg version -t "$next_run" "$product")" = "<"
+                printf "%s < %s < %s < %s < %s\n" "${stable#v}" "$preview" "$next_attempt" "$next_run" "$product"
+              ' || result=$?
+            fi
+            if [ "$result" -eq 0 ]; then
+              su hnbuild -c 'sh packaging/x11-tests.sh python3 packaging/native_ci.py verify \
+                --prefix /usr/local --tester build-qt/bin/helloneedle-gui-tests' || result=$?
+            fi
+            # The VM action copies the workspace back after its script succeeds.
+            # Carry the original test status and any partial evidence to the host.
+            mkdir -p "$resultdir/native-out"
+            if [ -d native-out ]; then cp -R native-out/. "$resultdir/native-out/"; fi
+            printf '%s\n' "$result" > "$resultdir/native-out/freebsd-status"
+      - name: Check the VM's build and test status
+        run: test "$(cat native-out/freebsd-status)" = 0
+      - name: Preserve FreeBSD screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gui-evidence-freebsd-${{ env.HN_FREEBSD_RELEASE }}-amd64-x11
+          overwrite: true
+          path: native-out/evidence/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ !cancelled() && env.HN_DEVELOPMENT == '0' && hashFiles('native-out/packages/SHA256SUMS') != '' }}
+        with:
+          name: helloneedle-freebsd-${{ env.HN_FREEBSD_RELEASE }}-amd64
+          path: native-out/packages/
+          if-no-files-found: error
+      - name: Upload matching offline source
+        id: preview_source
+        if: env.HN_DEVELOPMENT == '1'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: native-out/source/*.tar.gz
+          archive: false
+          if-no-files-found: error
+      - name: Upload the tested FreeBSD development package
+        id: preview_package
+        if: env.HN_DEVELOPMENT == '1'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          path: native-out/packages/*.pkg
+          archive: false
+          if-no-files-found: error
+      - name: Show the tested package and its checksum
+        if: env.HN_DEVELOPMENT == '1'
+        env:
+          PACKAGE_URL: ${{ steps.preview_package.outputs.artifact-url }}
+          SOURCE_URL: ${{ steps.preview_source.outputs.artifact-url }}
+        working-directory: native-out/packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          package=( *.pkg )
+          {
+            printf '[Download %s](%s)\n\n' "${package[0]}" "$PACKAGE_URL"
+            printf 'SHA-256 `%s`\n\n' "$(sha256sum "${package[0]}" | cut -d" " -f1)"
+            printf '[Tested commit `%s`](%s/%s/commit/%s) · [Offline source](%s)\n' \
+              "${GITHUB_SHA:0:12}" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$SOURCE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

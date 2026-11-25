@@ -13,7 +13,7 @@ public:
     explicit SearchStatus(QStatusBar *bar);
     QPushButton *detailsButton() const { return details; }
     void retranslate();
-    void setMessage(const QString &text, int errors);
+    void setMessage(const QString &text, qint64 errors);
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;

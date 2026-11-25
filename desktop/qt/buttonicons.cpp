@@ -19,6 +19,10 @@ const char *iconName(hn::ButtonIcon icon)
     case ButtonIcon::Options: return "sliders-horizontal";
     case ButtonIcon::Details: return "list";
     case ButtonIcon::OpenOriginal: return "external-link";
+    case ButtonIcon::NextDocument: return "chevrons-down";
+    case ButtonIcon::NextMatch: return "chevron-down";
+    case ButtonIcon::PreviousMatch: return "chevron-up";
+    case ButtonIcon::PreviousDocument: return "chevrons-up";
     }
     Q_UNREACHABLE();
 }

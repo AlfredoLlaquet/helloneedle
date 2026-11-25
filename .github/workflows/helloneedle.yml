@@ -1,6 +1,12 @@
 name: Hello Needle native builds
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches-ignore: [development]
+    tags: ['**']
+  pull_request:
+    branches-ignore: [development]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -9,6 +15,7 @@ env:
 
 jobs:
   source:
+    if: github.ref != 'refs/heads/development' && github.head_ref != 'development'
     name: Corresponding source and Rust dependencies
     runs-on: ubuntu-24.04
     outputs:
@@ -58,7 +65,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build qt6-base-dev qt6-svg-dev qt6-qpa-plugins \
+          sudo apt-get install -y --no-install-recommends cmake ninja-build libsqlite3-dev qt6-base-dev qt6-svg-dev qt6-qpa-plugins \
             qt6-gtk-platformtheme qt6-translations-l10n poppler-utils antiword dpkg-dev xvfb openbox dbus-daemon \
             fonts-dejavu-core libxcb-cursor0
       - name: Build the package and retain the transcript
@@ -118,7 +125,7 @@ jobs:
           (cd "$RUNNER_TEMP" && echo "$checksum  $installer" | shasum -a 256 -c)
           pkgutil --check-signature "$RUNNER_TEMP/$installer"
           sudo installer -pkg "$RUNNER_TEMP/$installer" -target /
-          sudo /opt/local/bin/port -N install qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword ninja pkgconfig zstd lzip
+          sudo /opt/local/bin/port -N install sqlite3 qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword ninja pkgconfig zstd lzip
           printf '%s\n' /opt/local/bin >> "$GITHUB_PATH"
           printf '%s\n' 'CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local' >> "$GITHUB_ENV"
       - name: Build the application and retain the transcript
@@ -326,69 +333,13 @@ jobs:
   freebsd:
     name: FreeBSD ${{ matrix.release }} amd64, pkg and native X11
     needs: source
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        # Build each major ABI on its oldest currently supported minor release.
         release: ['14.4', '15.1']
-    env:
-      HN_FREEBSD_RELEASE: ${{ matrix.release }}
-    steps:
-      - uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
-        with:
-          release: ${{ matrix.release }}
-          arch: x86_64
-          mem: '8192'
-          sync: rsync
-          copyback: 'true'
-          envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA CARGO_BUILD_JOBS HN_FREEBSD_RELEASE'
-          prepare: |
-            set -eu
-            pkg install -y git cmake ninja rust qt6-base qt6-svg qt6-translations poppler-utils antiword python3 \
-              xorg-vfbserver openbox dbus dejavu
-            dbus-uuidgen --ensure
-          run: |
-            set -eu
-            test "$(freebsd-version -u | cut -d- -f1)" = "$HN_FREEBSD_RELEASE"
-            test "$(pkg config ABI)" = "FreeBSD:${HN_FREEBSD_RELEASE%%.*}:amd64"
-            resultdir=$PWD
-            pw useradd -n hnbuild -m -s /bin/sh
-            cd /home/hnbuild
-            su hnbuild -c 'git clone --no-checkout "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" source'
-            cd source
-            su hnbuild -c 'git fetch origin "$GITHUB_SHA" && git checkout --detach "$GITHUB_SHA"'
-            result=0
-            su hnbuild -c 'set -eu -o pipefail; mkdir -p native-out/evidence;
-              python3 -u packaging/native_ci.py build 2>&1 | tee native-out/evidence/build.log' || result=$?
-            if [ "$result" -eq 0 ]; then
-              pkg add native-out/packages/*.pkg || result=$?
-            fi
-            if [ "$result" -eq 0 ]; then
-              su hnbuild -c 'sh packaging/x11-tests.sh python3 packaging/native_ci.py verify \
-                --prefix /usr/local --tester build-qt/bin/helloneedle-gui-tests' || result=$?
-            fi
-            # The VM action copies the workspace back after its script succeeds.
-            # Carry the original test status and any partial evidence to the host.
-            mkdir -p "$resultdir/native-out"
-            if [ -d native-out ]; then cp -R native-out/. "$resultdir/native-out/"; fi
-            printf '%s\n' "$result" > "$resultdir/native-out/freebsd-status"
-      - name: Check the VM's build and test status
-        run: test "$(cat native-out/freebsd-status)" = 0
-      - name: Preserve FreeBSD screenshots and logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: gui-evidence-freebsd-${{ matrix.release }}-amd64-x11
-          path: native-out/evidence/
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: ${{ !cancelled() && hashFiles('native-out/packages/SHA256SUMS') != '' }}
-        with:
-          name: helloneedle-freebsd-${{ matrix.release }}-amd64
-          path: native-out/packages/
-          if-no-files-found: error
+    uses: ./.github/workflows/freebsd-package.yml
+    with:
+      release: ${{ matrix.release }}
 
   freebsd14-install:
     name: Install the FreeBSD 14.x package on FreeBSD 14.5 amd64
@@ -448,7 +399,7 @@ jobs:
           update: true
           install: >-
             git tar zstd lzip curl mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-svg mingw-w64-ucrt-x86_64-qt6-translations
+            mingw-w64-ucrt-x86_64-rust mingw-w64-ucrt-x86_64-sqlite3 mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-svg mingw-w64-ucrt-x86_64-qt6-translations
             mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-poppler mingw-w64-ucrt-x86_64-poppler-data mingw-w64-ucrt-x86_64-antiword
       - name: Record antiword behavior for Windows paths

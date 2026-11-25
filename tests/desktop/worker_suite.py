@@ -9,9 +9,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 
 from document_fixtures import write_documents
+from parallel_checks import verify_parallel
+from pdf_checks import verify_pdf_streaming
+from search_benchmark import benchmark
 
 
 def exchange(executable, operation, payload, allow_errors=False, env=None):
@@ -25,10 +29,22 @@ def exchange(executable, operation, payload, allow_errors=False, env=None):
     return events
 
 
+def retained_matches(events):
+    matches = []
+    for event in events:
+        if event["type"] == "match":
+            matches.append(event)
+        elif event["type"] == "discard":
+            identity = event.get("pathBytes", event["path"])
+            matches = [hit for hit in matches
+                       if hit.get("pathBytes", hit["path"]) != identity or hit["kind"] == "filename"]
+    return matches
+
+
 def search(executable, folder, query, *, allow_errors=False, **options):
     payload = {"folder": str(folder), "query": query, "mode": "document", **options}
     events = exchange(executable, "search", payload, allow_errors)
-    matches = [event for event in events if event["type"] == "match"]
+    matches = retained_matches(events)
     if not allow_errors:
         assert events[-1]["type"] == "done" and events[-1]["count"] == len(matches), events[-1]
     return matches, [event for event in events if event["type"] == "error"]
@@ -41,8 +57,8 @@ def utf16_slice(string, start, length):
     return data[start * 2:(start + length) * 2].decode("utf-16-le")
 
 
-def preview(executable, hit, mode="document"):
-    request = {"path": hit["path"], "mode": mode, "location": hit["location"],
+def preview(executable, hit, mode=None):
+    request = {"path": hit["path"], "mode": mode or hit.get("mode", "document"), "location": hit["location"],
                "blockStart": hit["blockStart"]}
     if "pathBytes" in hit:
         request["pathBytes"] = hit["pathBytes"]
@@ -161,8 +177,9 @@ def verify_large_html(worker, root):
         validate_occurrence(worker, hit, "Needle")
     caption, _ = search(worker, root, "Needle caption")
     assert len(caption) == 1
-    _, errors = search(worker, root, "base64", mode="source", allow_errors=True)
-    assert len(errors) == 1 and errors[0]["code"] in {"limit", "too_large"}, errors
+    source_hits, _ = search(worker, root, "base64", mode="source")
+    assert len(source_hits) == 1
+    validate_occurrence(worker, source_hits[0], "base64")
 
     # A long unbroken paragraph also needs a bounded preview near the match,
     # including the original UTF-16 coordinate after a non-BMP character.
@@ -185,11 +202,25 @@ def verify_scan_counts(worker, root):
     (root / "b.txt").write_text("Needle and Needle", encoding="utf-8")
     (root / "c.docx").write_bytes(b"invalid package")
     (root / "d.bin").write_bytes(b"\x00\x01")
+    # Extension-only skips must precede the size check and must never read content.
+    for name in ("clip.mp4", "backup.7z"):
+        with (root / name).open("wb") as media:
+            media.write(b"Needle")
+            media.truncate(70 * 1024 * 1024)
+    (root / "README").write_text("Needle in extensionless text", encoding="utf-8")
+    (root / "unknown.format").write_bytes(b"\0\x01Needle")
     events = exchange(worker, "search", {"folder": str(root), "query": "Needle"}, allow_errors=True)
-    progress = [e["documentsScanned"] for e in events if e["type"] == "progress"]
+    progress = [e["files"] for e in events if e["type"] == "progress"]
     assert progress and progress[0] == 1 and progress == sorted(set(progress)), events
-    assert events[-1] == {"type": "done", "count": 2, "files": 4, "documentsScanned": 2,
+    assert events[-1] == {"type": "done", "count": 3, "files": 8, "documentsScanned": 3,
                           "errors": 1, "truncated": False}, events
+
+    # A sample can look like text until a later buffered read reveals binary data.
+    # Its filename hit survives the withdrawal of its provisional content hit.
+    late_binary = root / "Needle.unknown"
+    late_binary.write_bytes(b"Needle\n" + b"an ordinary line\n" * 20000 + b"\0")
+    matches, errors = search(worker, root, "Needle", filenames=True, pathPattern="*.unknown")
+    assert not errors and [hit["kind"] for hit in matches] == ["filename"], (matches, errors)
 
 
 def verify_options_and_recovery(worker, root):
@@ -256,9 +287,13 @@ def main():
             verify_small_word(worker, root / "small binary Word")
         verify_modes(worker, root / "markup")
         verify_scan_counts(worker, root / "scan counts")
+        verify_pdf_streaming(worker, root / "pdf streaming")
         verify_large_html(worker, root / "large markup")
         verify_options_and_recovery(worker, root / "search controls")
         verify_native_names(worker, root / "native names")
+        verify_parallel(worker, root / "parallel", exchange, retained_matches)
+        if sys.platform.startswith("freebsd"):
+            benchmark(worker, root / "benchmark")
 
 
 if __name__ == "__main__":

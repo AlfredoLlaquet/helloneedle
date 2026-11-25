@@ -122,7 +122,7 @@ void SearchStatus::retranslate()
     arrange();
 }
 
-void SearchStatus::setMessage(const QString &text, int errors)
+void SearchStatus::setMessage(const QString &text, qint64 errors)
 {
     status->setText(text);
     status->setToolTip(text);

@@ -1,13 +1,13 @@
 Hello Needle @VERSION@ finds words and phrases in local documents, including searchable PDF, Microsoft Office and OpenDocument files. Its Qt 6 interface is available in English and Spanish.
 
-**New in 1.1.0.** In Document mode, Hello Needle skips embedded pictures as it reads saved HTML pages. Captions and image descriptions stay searchable. The status bar counts scanned documents and matches, places the error count beside **Details**, and includes a centered link to Alfredo Llaquet-Alsina’s Crumbs. The **Search in** selector sits beside **Options**. A selected result shows its location and filename above **Open original**. The buttons use icons included with the application. FreeBSD users can download a package for their 14.x or 15.x system.
+**New in 1.2.0.** Searches continue past 10,000 matches, and **Details…** lets you read and copy every file error. Browse results by file name, relative path, or folder tree. Use **Exclude subdirectories** to search a single folder. Four navigation buttons and their shortcuts move between matches and documents while the search runs. The preview shows the file’s directory, can copy an entire long match, and displays PDF page text and finer detail at high zoom. Concurrent searches and larger document readers help you find text in long manuscripts, spreadsheets, saved web pages, and logs. [All changes in 1.2.0](https://github.com/@REPOSITORY@/blob/v@VERSION@/README.md#new-in-the-120-release)
 
 | Desktop | Download | Installation |
 | --- | --- | --- |
 @FREEBSD_DOWNLOADS@
 | Ubuntu 24.04 amd64 | [Debian package](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/helloneedle_@VERSION@_amd64.deb) | Run `sudo apt install ./helloneedle_@VERSION@_amd64.deb`. |
 | Windows x64 | [Hello Needle Setup](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/HelloNeedle-@VERSION@-Windows-x64-Setup.exe) | Run Setup and open Hello Needle from Start. |
-| macOS on Intel or Apple Silicon | [Universal disk image](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/HelloNeedle-@VERSION@-macOS-Universal.dmg) | Open the disk image and drag Hello Needle to Applications. |
+| macOS 15 or later on Intel or Apple Silicon | [Universal disk image](https://github.com/@REPOSITORY@/releases/download/v@VERSION@/HelloNeedle-@VERSION@-macOS-Universal.dmg) | Open the disk image and drag Hello Needle to Applications. |
 
 FreeBSD and Ubuntu install Qt and the document converters through their package managers. The Windows and macOS installers include these dependencies. Windows may identify the publisher as unknown. The macOS app is ad hoc signed. Gatekeeper may request approval on first launch. [Current installation and usage guide](https://github.com/@REPOSITORY@#readme)
 

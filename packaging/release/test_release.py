@@ -150,6 +150,21 @@ class FivePackageTransaction(ReleaseTransaction):
 
 
 class FreeBSDTargets(unittest.TestCase):
+    def test_reusable_job_name_preserves_each_release_check(self):
+        for target in native_packages.package_targets('1.2.0'):
+            build, *checks = target.jobs
+            self.assertTrue(target.passed_required_jobs(set(target.jobs)))
+            if not target.freebsd_release:
+                self.assertFalse(target.passed_required_jobs({build + ' / other job'}))
+                continue
+            child = f'Build, install and test on FreeBSD {target.freebsd_release} amd64'
+            qualified = f'{build} / {child}'
+            self.assertTrue(target.passed_required_jobs({qualified, *checks}))
+            self.assertFalse(target.passed_required_jobs({child, *checks}))
+            self.assertFalse(target.passed_required_jobs({f'{build} / other job', *checks}))
+            if checks:
+                self.assertFalse(target.passed_required_jobs({qualified}))
+
     def test_build_receipt_and_both_pkg_manifests_match_the_target(self):
         version = '1.1.0'
         targets = [t for t in native_packages.package_targets(version) if t.freebsd_release]
@@ -186,6 +201,39 @@ class FreeBSDTargets(unittest.TestCase):
                 with patch.dict(receipt, operating_system=f'{release}-RELEASE\n{other}-RELEASE'):
                     with self.assertRaisesRegex(ValueError, 'build or package manifests'):
                         native_packages.validate_freebsd(records, receipt, files, version, release)
+                with patch.dict(receipt['runtime_linkage'], helloneedle='libQt6Svg.so.6\nlibsqlite3.so.0'):
+                    with self.assertRaisesRegex(ValueError, 'sqlite3'):
+                        native_packages.validate_freebsd(records, receipt, files, version, release)
+                    with patch.dict(deps, sqlite3={'origin': 'databases/sqlite3', 'version': '1'}):
+                        with self.assertRaisesRegex(ValueError, 'sqlite3'):
+                            native_packages.validate_freebsd(records, receipt, files, version, release)
+                        with patch.dict(receipt, managed_packages=[*receipt['managed_packages'], 'sqlite3 1']):
+                            native_packages.validate_freebsd(records, receipt, files, version, release)
+
+
+class UbuntuPackages(unittest.TestCase):
+    def test_sqlite_linkage_requires_runtime_dependency_and_build_inventory(self):
+        tools = ['qt6-qpa-plugins', 'qt6-translations-l10n', 'poppler-utils', 'antiword']
+        base_deps = ['libc6', 'libqt6core6t64', 'libqt6gui6t64', 'libqt6widgets6t64', *tools]
+
+        def verify(linked='', depends=(), managed=()):
+            control = ('Package: helloneedle\nVersion: 1.2.0\nArchitecture: amd64\nDepends: '
+                       + ', '.join([*base_deps, *depends]) + '\n')
+            receipt = {'machine': 'x86_64', 'operating_system': 'Ubuntu 24.04.5 LTS',
+                       'runtime_linkage': {'helloneedle': linked},
+                       'managed_packages': [name + ' 1' for name in [*tools, *managed]]}
+            with patch.object(native_packages.subprocess, 'check_output', return_value=control):
+                native_packages.validate_debian(Path('helloneedle.deb'), receipt, '1.2.0')
+
+        linkage = 'libsqlite3.so.0 => /lib/x86_64-linux-gnu/libsqlite3.so.0'
+        runtime = ['libsqlite3-0 (>= 3.7.14)']
+        build = ['libsqlite3-dev:amd64']
+        verify()
+        with self.assertRaisesRegex(ValueError, 'Missing SQLite build inventory'):
+            verify(linkage, depends=runtime)
+        with self.assertRaisesRegex(ValueError, 'dependencies'):
+            verify(linkage, managed=build)
+        verify(linkage, depends=runtime, managed=build)
 
 
 if __name__ == '__main__':

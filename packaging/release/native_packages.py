@@ -20,6 +20,13 @@ class Package:
     jobs: tuple[str, ...]
     freebsd_release: str = ''
 
+    def passed_required_jobs(self, successful):
+        build, *install_checks = self.jobs
+        if self.freebsd_release and build not in successful:
+            # GitHub prefixes the reusable workflow's job name with its caller.
+            build = f'{build} / Build, install and test on FreeBSD {self.freebsd_release} amd64'
+        return build in successful and successful.issuperset(install_checks)
+
 
 def package_targets(version):
     # The immutable 1.0.0 release distributed one FreeBSD binary under its original name.
@@ -136,10 +143,12 @@ def validate_freebsd(records, receipt, files, version, release):
         raise ValueError('FreeBSD build or package manifests disagree')
     origins = {'qt6-base': 'devel/qt6-base', 'qt6-translations': 'devel/qt6-translations',
                'poppler-utils': 'graphics/poppler-utils', 'antiword': 'textproc/antiword'}
-    # The first release predates the SVG button artwork. Check the libraries
-    # actually linked by the build whose package is being verified.
-    if 'libQt6Svg.so' in receipt['runtime_linkage']['helloneedle']:
+    # Older releases predate the SVG controls and SQLite result store.
+    linked = receipt['runtime_linkage']['helloneedle']
+    if 'libQt6Svg.so' in linked:
         origins['qt6-svg'] = 'graphics/qt6-svg'
+    if 'libsqlite3.so' in linked:
+        origins['sqlite3'] = 'databases/sqlite3'
     installed = dict(line.split(' ', 1) for line in receipt['managed_packages'])
     for name, origin in origins.items():
         dep = compact['deps'].get(name, {})
@@ -156,10 +165,15 @@ def validate_debian(package, receipt, version):
     managed = {line.split()[0].split(':')[0] for line in receipt['managed_packages']}
     tools = {'qt6-qpa-plugins', 'qt6-translations-l10n', 'poppler-utils', 'antiword'}
     required = tools | {'libc6', 'libqt6core6t64', 'libqt6gui6t64', 'libqt6widgets6t64'}
-    if 'libQt6Svg.so' in receipt['runtime_linkage']['helloneedle']:
+    linked = receipt['runtime_linkage']['helloneedle']
+    if 'libQt6Svg.so' in linked:
         required.add('libqt6svg6')
         if 'qt6-svg-dev' not in managed:
             raise ValueError('Missing Qt SVG build inventory')
+    if 'libsqlite3.so' in linked:
+        required.add('libsqlite3-0')
+        if 'libsqlite3-dev' not in managed:
+            raise ValueError('Missing SQLite build inventory')
     dependencies = {dep.strip().split()[0] for dep in fields.get('Depends', '').split(',') if dep.strip()}
     if not required.issubset(dependencies) or not tools.issubset(managed):
         raise ValueError('Missing Ubuntu Qt or document runtime dependencies')
@@ -175,7 +189,7 @@ def add_packages(repo, run_id, revision, version, dest):
     for target in package_targets(version):
         filename = target.filename
         matches = [a for a in artifacts if a['name'] == target.artifact]
-        if not successful.issuperset(target.jobs) or len(matches) != 1 or matches[0]['expired']:
+        if not target.passed_required_jobs(successful) or len(matches) != 1 or matches[0]['expired']:
             raise ValueError(f'Missing successful native test or unique live artifact for {target.artifact}')
         item = matches[0]
         with tempfile.TemporaryDirectory(dir=dest.parent) as temp:

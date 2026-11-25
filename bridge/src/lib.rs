@@ -11,9 +11,12 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{fs, path::Path};
 
-pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_BLOCKS: usize = 200_000;
+
+/// The GUI's Automatic label and the search worker use the same CPU allowance.
+pub fn available_processors() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
 
 #[derive(Debug, Serialize)]
 pub struct Block {
@@ -77,12 +80,16 @@ impl Failure {
             "resource_limit",
             "missing_decoder",
             "unreadable_document",
+            "location",
         ];
         let prefix = message.split_once(':').map(|(code, _)| code);
-        let code = known
-            .into_iter()
-            .find(|c| Some(*c) == prefix)
-            .unwrap_or("format");
+        let code = known.into_iter().find(|c| Some(*c) == prefix).unwrap_or(
+            if error.is::<std::io::Error>() {
+                "read"
+            } else {
+                "format"
+            },
+        );
         Self::new(code, message)
     }
 }
@@ -118,44 +125,64 @@ fn revision(path: &Path) -> Result<String, Failure> {
     }
 }
 
-fn extract(path: &Path, mode: &str) -> Result<Option<Document>, Failure> {
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let large_html = mode == "document" && documents::is_html(&extension);
-    if !large_html
-        && fs::metadata(path)
-            .map_err(|e| Failure::new("read", e))?
-            .len()
-            > MAX_FILE_BYTES
+/// Choose a reader before opening a file or applying a format-specific size limit.
+enum Reader {
+    Skip,
+    Lines(&'static str),
+    Pdf,
+    Docx,
+    Office(&'static str),
+    Markdown,
+    Html,
+}
+
+impl Reader {
+    fn for_path(path: &Path, mode: &str) -> Self {
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match extension.as_str() {
+            "pdf" => Self::Pdf,
+            "docx" => Self::Docx,
+            "xlsx" => Self::Office("xlsx"),
+            "pptx" => Self::Office("pptx"),
+            "odt" => Self::Office("odt"),
+            "ods" => Self::Office("ods"),
+            "odp" => Self::Office("odp"),
+            "fodt" => Self::Office("fodt"),
+            "doc" => Self::Office("doc"),
+            "rtf" => Self::Office("rtf"),
+            "html" | "htm" | "xhtml" if mode == "document" => Self::Html,
+            "html" | "htm" | "xhtml" => Self::Lines("html"),
+            "md" | "markdown" | "mdown" | "mkd" | "mkdn" if mode == "document" => Self::Markdown,
+            "md" | "markdown" | "mdown" | "mkd" | "mkdn" => Self::Lines("markdown"),
+            // Formats without a text reader. Ambiguous extensions and extensionless
+            // files go to the buffered text probe, so scripts and logs stay searchable.
+            "7z" | "zip" | "rar" | "tar" | "gz" | "tgz" | "bz2" | "tbz" | "tbz2" | "xz" | "txz"
+            | "zst" | "lz4" | "cab" | "iso" | "dmg" | "deb" | "rpm" | "pkg" | "apk" | "jar"
+            | "epub" | "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "ico"
+            | "icns" | "heic" | "heif" | "avif" | "jxl" | "psd" | "mp4" | "m4v" | "mkv" | "mov"
+            | "avi" | "wmv" | "webm" | "mpg" | "mpeg" | "mp3" | "m4a" | "aac" | "flac" | "ogg"
+            | "opus" | "wav" | "wma" | "exe" | "dll" | "dylib" | "so" | "o" | "a" | "class"
+            | "pyc" | "wasm" | "ttf" | "otf" | "woff" | "woff2" | "bin" | "sqlite" | "sqlite3" => {
+                Self::Skip
+            }
+            _ => Self::Lines("text"),
+        }
+    }
+}
+
+fn html_document(path: &Path) -> Result<Document, Failure> {
+    let doc = documents::read_html(path).map_err(Failure::decoder)?;
+    if !doc
+        .blocks
+        .iter()
+        .enumerate()
+        .all(|(i, b)| b.location["index"].as_u64() == Some(i as u64))
     {
-        return Err(Failure::new("limit", "File exceeds the 64 MiB input limit"));
+        return Err(Failure::new("format", "Invalid document block location"));
     }
-    let document = match office::extract(path, &extension).map_err(Failure::decoder)? {
-        Some(document) => Some(document),
-        None => documents::extract(path, &extension, mode).map_err(Failure::decoder)?,
-    };
-    if let Some(ref doc) = document {
-        let bytes = doc
-            .blocks
-            .iter()
-            .fold(0usize, |size, block| size.saturating_add(block.text.len()));
-        if !large_html && (bytes > MAX_TEXT_BYTES || doc.blocks.len() > MAX_BLOCKS) {
-            return Err(Failure::new(
-                "limit",
-                "Extracted document exceeds the text or block limit",
-            ));
-        }
-        if !doc
-            .blocks
-            .iter()
-            .enumerate()
-            .all(|(i, b)| b.location["index"].as_u64() == Some(i as u64))
-        {
-            return Err(Failure::new("format", "Invalid document block location"));
-        }
-    }
-    Ok(document)
+    Ok(doc)
 }

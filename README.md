@@ -1,3 +1,14 @@
+<table>
+  <tr>
+    <td width="128" valign="middle">
+      <a href="https://github.com/AlfredoLlaquet/bsd-first">
+        <img src="./bsd-first.svg" alt="BSD first" width="128">
+      </a>
+    </td>
+    <td valign="middle">This application was built and tested on BSD first to make it run well on as many operating systems as possible.</td>
+  </tr>
+</table>
+
 # Hello Needle
 
 <img align="right" src="desktop/qt/helloneedle.png" width="72" height="72" alt="Hello Needle’s astonished cow">
@@ -8,51 +19,66 @@ Created by **Alfredo Llaquet-Alsina**. Programmed by **ChatGPT**.
 
 ## Download Hello Needle
 
-Hello Needle 1.1.0 is free to download and use. Choose the file for your computer.
+Choose the Hello Needle 1.2.0 download for your computer.
 
 | Your system | Download | Installation instructions |
 | --- | --- | --- |
-| **FreeBSD 14.x, amd64** | [Download for FreeBSD 14.x (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle-1.1.0-FreeBSD-14-amd64.pkg) | [Install on FreeBSD](#install-on-freebsd) |
-| **FreeBSD 15.x, amd64** | [Download for FreeBSD 15.x (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle-1.1.0-FreeBSD-15-amd64.pkg) | [Install on FreeBSD](#install-on-freebsd) |
-| **Ubuntu 24.04 LTS, amd64** | [Download the Ubuntu package (.deb)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle_1.1.0_amd64.deb) | [Install on Ubuntu](#install-on-ubuntu) |
-| **Windows 10 (1903 or later) or Windows 11, x64** | [Download the Windows installer (.exe)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-Windows-x64-Setup.exe) | [Install on Windows](#install-on-windows) |
-| **macOS 15 or later, Apple Silicon or Intel** | [Download the Mac disk image (.dmg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-macOS-Universal.dmg) | [Install on macOS](#install-on-macos) |
+| **FreeBSD 14.x, amd64** | [Download for FreeBSD 14.x (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/helloneedle-1.2.0-FreeBSD-14-amd64.pkg) | [Install on FreeBSD](#install-on-freebsd) |
+| **FreeBSD 15.x, amd64** | [Download for FreeBSD 15.x (.pkg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/helloneedle-1.2.0-FreeBSD-15-amd64.pkg) | [Install on FreeBSD](#install-on-freebsd) |
+| **Ubuntu 24.04 LTS, amd64** | [Download the Ubuntu package (.deb)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/helloneedle_1.2.0_amd64.deb) | [Install on Ubuntu](#install-on-ubuntu) |
+| **Windows 10 (1903 or later) or Windows 11, x64** | [Download the Windows installer (.exe)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/HelloNeedle-1.2.0-Windows-x64-Setup.exe) | [Install on Windows](#install-on-windows) |
+| **macOS 15 or later, Apple Silicon or Intel** | [Download the Mac disk image (.dmg)](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/HelloNeedle-1.2.0-macOS-Universal.dmg) | [Install on macOS](#install-on-macos) |
 
-The Windows x64 installer also runs on Windows 11 on Arm. The Mac download runs natively on both kinds of Mac. The release page includes the source code and checksums for these exact files. [Hello Needle 1.1.0 release](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.1.0)
+The Windows x64 installer also runs on Windows 11 on Arm. The Mac download runs natively on both kinds of Mac. The release page includes the source code and checksums for these exact files. [Hello Needle 1.2.0 release](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.2.0)
+
+[What’s new in 1.2.0](#new-in-the-120-release) · [FreeBSD 15.x development builds](#freebsd-15-development-builds)
 
 ### Install on FreeBSD
 
-There are separate amd64 packages for **FreeBSD 14.x** and **FreeBSD 15.x**. Run `freebsd-version -u` to see which major version your computer uses. The 14.x package was built on 14.4 and tested on both 14.4 and 14.5. The 15.x package was built and tested on 15.1.
+There are separate amd64 packages for **FreeBSD 14.x** and **FreeBSD 15.x**. Run `freebsd-version -u` to see which major version your computer uses. The build uses FreeBSD 14.4 for the 14.x package and FreeBSD 15.1 for the 15.x package. FreeBSD 14.5 uses the same 14.x download.
 
 Download the matching package, open a terminal in that folder, and run the corresponding command as **root**. The `./` tells `pkg` to install the downloaded file. It will fetch missing dependencies from your configured FreeBSD repositories.
 
 For **FreeBSD 14.x**, use
 
 ```sh
-pkg install ./helloneedle-1.1.0-FreeBSD-14-amd64.pkg
+pkg install ./helloneedle-1.2.0-FreeBSD-14-amd64.pkg
 ```
 
 For **FreeBSD 15.x**, use
 
 ```sh
-pkg install ./helloneedle-1.1.0-FreeBSD-15-amd64.pkg
+pkg install ./helloneedle-1.2.0-FreeBSD-15-amd64.pkg
 ```
 
 Back in your desktop account, open the application menu and search for **Hello Needle**, or run `helloneedle` in a terminal. To open a particular folder at startup, run `helloneedle "$HOME/Documents"`. To uninstall, run `pkg delete helloneedle` as root.
 
-### Install on Ubuntu
+### FreeBSD 15 development builds
 
-Download `helloneedle_1.1.0_amd64.deb`. In the folder containing it, run the following command. APT installs Hello Needle and the libraries and document readers it needs.
+Each push to `development` builds a FreeBSD 15.x amd64 test package. Open a successful run with the change you want, sign in to GitHub, and download the **.pkg** from its summary. The summary also gives the SHA-256 checksum and matching source archive. [FreeBSD development builds](https://github.com/AlfredoLlaquet/helloneedle/actions/workflows/freebsd-package.yml?query=branch%3Adevelopment)
+
+Place the downloaded package in a folder by itself, quit Hello Needle, and run these commands there. Compare the output of the first command with the checksum in the run. Run the second command as **root**, then launch Hello Needle from your desktop account.
 
 ```sh
-sudo apt install ./helloneedle_1.1.0_amd64.deb
+sha256 -q ./helloneedle-*-FreeBSD-15-amd64.pkg
+pkg install ./helloneedle-*-FreeBSD-15-amd64.pkg
+```
+
+The package version includes the build and attempt numbers so `pkg` can upgrade one test build to the next. For a source build of the same revision, unpack the source archive linked in that run and start at the CMake step in the FreeBSD instructions. [FreeBSD source build](#build-and-run-on-freebsd-14x-and-15x)
+
+### Install on Ubuntu
+
+Download `helloneedle_1.2.0_amd64.deb`. In the folder containing it, run the following command. APT installs Hello Needle and the libraries and document readers it needs.
+
+```sh
+sudo apt install ./helloneedle_1.2.0_amd64.deb
 ```
 
 Open **Hello Needle** from the applications menu, or run `helloneedle` in a terminal. To uninstall, run `sudo apt remove helloneedle`. On both Ubuntu and FreeBSD, install a newer package the same way, using its new filename.
 
 ### Install on Windows
 
-1. Open `HelloNeedle-1.1.0-Windows-x64-Setup.exe`. Choose English or Spanish and follow Setup. It installs for your account and offers a desktop shortcut.
+1. Open `HelloNeedle-1.2.0-Windows-x64-Setup.exe`. Choose English or Spanish and follow Setup. It installs for your account and offers a desktop shortcut.
 2. Open **Start**, type **Hello Needle**, and select it. The installer includes everything needed to search PDFs and Word files.
 3. To update, close Hello Needle and run the newer installer. To uninstall, open **Settings → Apps**, find **Hello Needle** in the list, and select **Uninstall**.
 
@@ -60,7 +86,7 @@ Windows can display **Unknown publisher** because the installer has no Windows p
 
 ### Install on macOS
 
-1. Open `HelloNeedle-1.1.0-macOS-Universal.dmg` in Finder. Drag **Hello Needle** onto the **Applications** shortcut in the disk image.
+1. Open `HelloNeedle-1.2.0-macOS-Universal.dmg` in Finder. Drag **Hello Needle** onto the **Applications** shortcut in the disk image.
 2. Eject the disk image and open **Hello Needle** from **Applications**. The app includes its PDF and Word readers.
 3. To update, quit the app and replace it with the newer copy. To uninstall, move **Hello Needle** from Applications to the Trash.
 
@@ -76,11 +102,25 @@ Hello Needle 1.1.0 on FreeBSD found 15 matches across 13 scanned documents. In t
 
 ![Hello Needle on FreeBSD with the second occurrence of “Needle” highlighted on page 2 of a PDF](docs/screenshots/1.1.0/freebsd-pdf-search.png)
 
-### New in 1.1.0
+### New in the 1.2.0 release
 
-- **Search saved web pages with embedded pictures.** Choose **Document** in the **Search in** menu beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The size of the saved HTML file can exceed 1 GiB. The reader applies a 1 GiB memory budget to what it keeps for that document. If it reaches that budget, it reports the file under **Details…** and continues searching. **Source** searches the original markup under its existing size limits.
-- **Follow a search as it runs.** The left of the status bar shows documents scanned and matches found. A successfully searched document counts once, even if it contains no matches. If any files cause errors, the error count appears on the right beside **Details…**. Click the button for the filenames and reasons.
-- **Identify the selected result.** The left-aligned preview heading gives the location followed by the filename, for example `Paragraph 12 - Meeting notes.docx`. A long heading can wrap onto a second line. The **Open original** button sits directly below the heading on the left and opens the file in its usual application. The buttons include labeled icons that follow the light or dark theme and come with the app on every platform.
+- **See every match and every file error.** Searches continue past 10,000 matches. Large result sets use temporary disk space. You can navigate to the last occurrence while the results list displays a page at a time. **Details…** lets you read and copy every file error, including those beyond the first 200.
+- **Choose how to see your files.** The **View** menu beside **Results** offers **File names** (the default), **File paths** and **Folder tree**. The preview always shows the selected file’s directory on a separate, selectable line. Turn on **Options → Exclude subdirectories** to search only the chosen folder. Both choices are remembered.
+- **Read the complete match.** Use **Copy match** for the entire occurrence. A very long match opens in parts and can be saved directly to a file. In PDFs, **Show text** includes the other lines on the selected page. Zooming further into the printed page brings finer detail into view.
+- **Search larger documents and logs.** Markdown and Office readers can process documents beyond the former file-size and paragraph limits. Colored terminal logs are searchable as readable text, even when a color change occurs in the middle of a word.
+- **Move through results as they arrive.** Four icon buttons under **Results** select the next document, next match, previous match, or previous document. The tree follows your selection and the preview centers the highlighted passage. [Navigation and keyboard shortcuts](#move-between-results)
+- **Search several files at once.** Hello Needle normally uses half the logical processors available to it. **File → Settings…** lets you change the number of workers and simultaneous PDF conversions. [Adjust search performance](#adjust-search-performance)
+- **Follow the whole folder scan.** **Files scanned** advances once for every file examined after your filters apply. Videos, archives, other recognized binary files, and PDFs with no searchable text all count. Hello Needle silently passes over their contents. Files with unfamiliar extensions are checked for readable text. **Search file names** can still find a video or archive by name. **Details…** lists files that actually failed to open or process.
+- **Search large text files and source.** Text lists, JSON exports, and HTML or Markdown in **Source** mode are read in large chunks. File size and line count no longer stop the search. A literal phrase can span two chunks, even within a single very long line. Selecting it takes the preview straight to the passage. A complex regular expression on an exceptionally long individual line can still reach the reader’s memory budget.
+- **Search older Spanish documents and saved web pages.** Plain text, HTML, and Markdown can use Windows-1252, including accented letters, curly quotes, and inverted punctuation. This works in both **Document** and **Source**. In a Word-exported `.txt`, an ordinary hyphen can find a word that uses Word’s invisible nonbreaking-hyphen marker. OpenDocument can also read a supported legacy encoding declared in its XML. The Word reader follows inherited text visibility in older `.doc` files.
+- **Search long Word manuscripts.** Hello Needle reads the main body of a DOCX paragraph by paragraph. Formatting changes can split a phrase into several pieces in the file. You can still find the whole phrase and see it highlighted with the surrounding paragraphs.
+- **Search long PDFs.** The PDF reader works page by page. The total number of words and the total amount of page layout data no longer stop a search. If Poppler crashes while extracting the page layout, Hello Needle retries using plain text. Recovered passages open with the exact text selected. **Show page** still opens the printed page when coordinates for a highlight are unavailable. A scanned page without a text layer is skipped, and searchable pages in the same PDF keep their original page numbers.
+
+### New in the 1.1.0 release
+
+- **Search saved web pages with embedded pictures.** Choose **Document** in the **Search in** menu beside **Options**. Hello Needle skips embedded image data as it reads the HTML. Captions and image descriptions (`alt` text) are searchable, even when a photograph makes the saved page very large. The size of the saved HTML file can exceed 1 GiB. The reader applies a 1 GiB memory budget to what it keeps for that document. If it reaches that budget, it reports the file under **Details…** and continues searching.
+- **Follow a search as it runs.** Version 1.1.0 introduced live counts for successfully searched documents, matches, and file errors. In 1.2.0, **Files scanned** counts every eligible file examined. **Details…** gives the filenames and reasons for errors.
+- **Identify the selected result.** The left-aligned preview heading gives the location followed by the filename, for example `Paragraph 12 - Meeting notes.docx`. A long heading can wrap onto a second line. The **Open original** button opens the file in its usual application. Version 1.2.0 also shows the file’s directory beneath the heading. The buttons include labeled icons that follow the light or dark theme and come with the app on every platform.
 - **Visit TheCrumbs.org.** The centered link reads `Read Alfredo Llaquet-Alsina's Crumbs at TheCrumbs.org`. Hovering over it underlines the whole sentence and shows the hint `Open TheCrumbs.org in your browser`. Clicking anywhere on the text opens the site in your default browser. In a narrow window the link moves to its own row below the counters.
 
 ### Documents and previews
@@ -104,11 +144,33 @@ Choose **Source** to search the saved HTML or Markdown itself. A search for `<st
 
 Open **Options** to limit the search to certain files or change what counts as a match.
 
+- Select **Exclude subdirectories** to search only files directly inside the chosen folder. Clear it to include all its subfolders again.
 - Set **Path filter** to `*.pdf` to search just the PDFs in the folder and its subfolders.
 - Turn on **Case sensitive** to distinguish `May` from `may`. Turn on **Regular expression** to search for a pattern.
 - Turn on **Search file names** to include matches in filenames as well as in their contents. **Include hidden files** and **Include ignored files** let you search files the default search skips.
 
 Press **Escape** to cancel a search. **Ctrl+F** returns to the search field and **Ctrl+O** opens the folder chooser. On a Mac use **Command+F** and **Command+O**. If a file cannot be read, the other files are still searched. Click **Details…** in the status bar to see which file caused the problem.
+
+### Move between results
+
+The four buttons below **Results** become available with the first match. Their hints show the shortcuts. A single chevron moves one occurrence and a double chevron moves one document.
+
+| Button order | Shortcut | Selection |
+| --- | --- | --- |
+| Next document | Ctrl+Down | First match in the next document |
+| Next match | F3 or Alt+Down | Next match, continuing into the next document |
+| Previous match | Shift+F3 or Alt+Up | Previous match, continuing into the previous document |
+| Previous document | Ctrl+Up | First match in the previous document |
+
+Use **View** to control how the files are listed. **File names** sorts by name. If two files share a name, their relative paths determine the order. **File paths** shows paths starting at the search folder. **Folder tree** lets you expand a directory and browse the files beneath it. Switching views keeps the same match selected. In all three views, the line below the preview heading gives the full directory and lets you copy it.
+
+At either end, navigation wraps through the results already found. Selecting an occurrence expands its document and brings the highlighted passage to the vertical center of the text preview. You can then scroll freely. In the printed PDF view, Hello Needle centers the highlighted words as far as the page’s scroll range permits.
+
+### Adjust search performance
+
+Choose **File → Settings…**. **Automatic** shows the number of search workers your computer will use. On a computer with eight logical processors available, the default is four. Each worker reads and searches one file at a time. Searching just one large document uses one worker. When searching a mechanical drive, a smaller worker count can reduce the time spent seeking between files.
+
+Under **Advanced**, **Simultaneous PDF conversions** controls how many search workers may run Poppler at once. The default is two, or one with a single worker. Other workers can continue with text or Word documents. Hello Needle also considers available memory before starting more demanding files. Your settings are saved for your desktop account and take effect at the start of the next search.
 
 ### English and Spanish
 
@@ -121,14 +183,14 @@ Choose **Language → Español** or **Language → English**. The choice is reme
 Hello Needle uses GitHub’s immutable releases. Once a version is published, its files are locked. To check your download, run the following command in the folder where you saved it, using a recent version of the GitHub CLI. This example checks the FreeBSD 15.x package. For another system, substitute the name of the file you downloaded.
 
 ```sh
-gh release verify-asset v1.1.0 helloneedle-1.1.0-FreeBSD-15-amd64.pkg --repo AlfredoLlaquet/helloneedle
+gh release verify-asset v1.2.0 helloneedle-1.2.0-FreeBSD-15-amd64.pkg --repo AlfredoLlaquet/helloneedle
 ```
 
-For a checksum check on FreeBSD, run `sha256 -q helloneedle-1.1.0-FreeBSD-15-amd64.pkg` for the 15.x download and compare the result with the line for that filename in the release checksum list. The Windows and macOS installers also have individual signed build records. [1.1.0 checksum list](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/SHA256SUMS) · [Windows build record](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-Windows-x64.sigstore.json) · [Mac build record](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/HelloNeedle-1.1.0-macOS-Universal.sigstore.json)
+For a checksum check on FreeBSD, run `sha256 -q helloneedle-1.2.0-FreeBSD-15-amd64.pkg` for the 15.x download and compare the result with the line for that filename in the release checksum list. The Windows and macOS installers also have individual signed build records. [1.2.0 checksum list](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/SHA256SUMS) · [Windows build record](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/HelloNeedle-1.2.0-Windows-x64.sigstore.json) · [Mac build record](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/HelloNeedle-1.2.0-macOS-Universal.sigstore.json)
 
 ## Build from source
 
-The recipes below build the current source from Git. To build the exact 1.1.0 release with its bundled Rust libraries, download and extract the release source archive. Open a terminal in the extracted folder and skip the `git clone` and `cd helloneedle` lines. [Download the 1.1.0 source archive](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.1.0/helloneedle-1.1.0-source-ab2355d90cb9d917536636387abf58acafc6eadc.tar.gz)
+The recipes below build the current source from Git. To build the exact 1.2.0 release with its bundled Rust libraries, open **Assets** on the release page and download the archive whose name starts with `helloneedle-1.2.0-source-` and ends in `.tar.gz`. Its filename includes the tested Git revision. Extract it, open a terminal in the extracted folder, and start at the CMake step for your system. [Hello Needle 1.2.0 release assets](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.2.0)
 
 [FreeBSD 14.x and 15.x](#build-and-run-on-freebsd-14x-and-15x) · [Ubuntu](#build-and-run-on-ubuntu) · [Windows](#build-and-run-on-windows) · [macOS](#build-and-run-on-macos)
 
@@ -137,7 +199,7 @@ The recipes below build the current source from Git. To build the exact 1.1.0 re
 Both FreeBSD amd64 packages use the same dependencies and build commands. On FreeBSD 14.x or 15.x, install the compiler tools, Qt, and the PDF and Word readers as **root**. The C++ compiler comes with the base system.
 
 ```sh
-pkg install git cmake ninja rust python3 qt6-base qt6-svg qt6-translations poppler-utils antiword
+pkg install git cmake ninja rust python3 sqlite3 qt6-base qt6-svg qt6-translations poppler-utils antiword
 ```
 
 As your **desktop account**, get the source and build the application.
@@ -163,7 +225,7 @@ On an Ubuntu 24.04 desktop, open Terminal and install the development packages.
 
 ```sh
 sudo apt update
-sudo apt install git curl build-essential cmake ninja-build python3 qt6-base-dev qt6-svg-dev \
+sudo apt install git curl build-essential cmake ninja-build python3 libsqlite3-dev qt6-base-dev qt6-svg-dev \
   qt6-qpa-plugins qt6-translations-l10n poppler-utils antiword
 ```
 
@@ -195,7 +257,7 @@ Install Git, the UCRT64 compilers, Qt, and the document readers.
 ```sh
 pacman -S --needed git \
   mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python} \
-  mingw-w64-ucrt-x86_64-{qt6-base,qt6-svg,qt6-translations,poppler,poppler-data,antiword}
+  mingw-w64-ucrt-x86_64-{sqlite3,qt6-base,qt6-svg,qt6-translations,poppler,poppler-data,antiword}
 ```
 
 Get the source, build it, and install a local copy in a folder named `stage` inside the checkout.
@@ -220,7 +282,7 @@ Open Terminal and install the tools and libraries. The commands use the standard
 ```sh
 export PATH="/opt/local/bin:/opt/local/sbin:$PATH"
 export CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local
-sudo /opt/local/bin/port install cmake ninja rust cargo python313 qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword
+sudo /opt/local/bin/port install cmake ninja rust cargo python313 sqlite3 qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword
 ```
 
 Get the source and compile it for your Mac’s processor. Install the application in your own **Applications** folder.

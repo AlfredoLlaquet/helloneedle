@@ -1,13 +1,20 @@
 # CG4FBS BEGIN ADDITION — Build the fork and exercise its installed application in FreeBSD.
 name: FreeBSD
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches-ignore: [development]
+    tags: ['**']
+  pull_request:
+    branches-ignore: [development]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   freebsd:
+    if: github.ref != 'refs/heads/development' && github.head_ref != 'development'
     name: Build, install and test on FreeBSD 15.1 amd64
     runs-on: ubuntu-24.04
     timeout-minutes: 90

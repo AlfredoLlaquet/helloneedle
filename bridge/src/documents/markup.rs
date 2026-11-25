@@ -1,18 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! CommonMark and HTML share one searchable projection and one preview sanitizer.
 
-use super::{html::Budget, MAX_BLOCKS};
-use crate::{Block, MAX_TEXT_BYTES};
-use anyhow::{ensure, Result};
+use super::html::Budget;
+use crate::Block;
+use anyhow::Result;
 use ego_tree::iter::Edge;
-use pulldown_cmark::{html, Options, Parser};
 use scraper::{node::Node, ElementRef, Html, Selector};
 use serde_json::json;
-use std::fmt;
-
-const MAX_MARKUP: usize = 8 * 1024 * 1024;
-const MAX_ELEMENTS: usize = 100_000;
-const MAX_DEPTH: usize = 128;
 
 pub(super) fn declared_encoding(bytes: &[u8]) -> Option<&'static encoding_rs::Encoding> {
     // HTML places encoding declarations within its first 1024 bytes. The declaration itself is ASCII.
@@ -42,58 +36,37 @@ pub(super) fn declared_encoding(bytes: &[u8]) -> Option<&'static encoding_rs::En
     None
 }
 
-// CommonMark can expand short input (e.g. nested lists) into substantially more HTML.
-struct HtmlBuffer(String);
-
-impl fmt::Write for HtmlBuffer {
-    fn write_str(&mut self, value: &str) -> fmt::Result {
-        if self.0.len().saturating_add(value.len()) > MAX_TEXT_BYTES {
-            return Err(fmt::Error);
-        }
-        self.0.push_str(value);
-        Ok(())
-    }
-}
-
+#[cfg(test)]
 pub(super) fn project(source: &str, markdown: bool) -> Result<Vec<Block>> {
-    ensure!(
-        source.len() <= MAX_MARKUP,
-        "too_large: markup exceeds parser limit"
-    );
-    let converted;
-    let html_source = if markdown {
-        let options =
-            Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-        let mut output = HtmlBuffer(String::new());
-        html::write_html_fmt(&mut output, Parser::new_ext(source, options))
-            .map_err(|_| anyhow::anyhow!("too_large: rendered Markdown exceeds limit"))?;
-        converted = output.0;
-        &converted
-    } else {
-        source
+    let mut blocks = Vec::new();
+    let mut collect = |block| {
+        blocks.push(block);
+        Ok(true)
     };
-    ensure!(
-        html_source
-            .bytes()
-            .filter(|&b| b == b'<')
-            .take(MAX_ELEMENTS + 1)
-            .count()
-            <= MAX_ELEMENTS,
-        "too_large: too many markup elements"
-    );
-    // Parsing constructs a tree in memory; it never opens the URLs in the input.
-    let document = Html::parse_document(html_source);
-    project_tree(&document, None)
+    if markdown {
+        super::markdown::visit_source(source, &mut collect)?;
+    } else {
+        // Independent reference for the filtering HTML tokenizer tests.
+        let doc = Html::parse_document(source);
+        project_tree(&doc, None, false, &mut collect)?;
+    }
+    Ok(blocks)
 }
 
-pub(super) fn project_tree(document: &Html, budget: Option<&Budget>) -> Result<Vec<Block>> {
+pub(super) fn project_tree(
+    document: &Html,
+    budget: Option<&Budget>,
+    stream_blocks: bool,
+    visitor: &mut dyn FnMut(Block) -> Result<bool>,
+) -> Result<()> {
     let mut projection = Projection {
         budget,
+        stream_blocks,
+        visitor: Some(visitor),
         ..Projection::default()
     };
     projection.walk(document.root_element())?;
-    projection.finish()?;
-    Ok(projection.blocks)
+    projection.finish()
 }
 
 #[derive(Clone, Copy, Default)]
@@ -123,8 +96,11 @@ impl Role {
 #[derive(Default)]
 struct Projection<'a> {
     budget: Option<&'a Budget>,
-    blocks: Vec<Block>,
-    bytes: usize,
+    stream_blocks: bool,
+    output_reservation: usize,
+    visitor: Option<&'a mut dyn FnMut(Block) -> Result<bool>>,
+    index: usize,
+    stopped: bool,
     role: Role,
     text: String,
     fragment: String,
@@ -145,9 +121,12 @@ struct Frame {
 }
 
 impl Projection<'_> {
-    fn reserve(&self, bytes: usize) -> Result<()> {
+    fn reserve(&mut self, bytes: usize) -> Result<()> {
         if let Some(budget) = self.budget {
             budget.reserve(bytes)?;
+            if self.stream_blocks {
+                self.output_reservation += bytes;
+            }
         }
         Ok(())
     }
@@ -157,13 +136,12 @@ impl Projection<'_> {
         let mut frames = Vec::new();
         let mut ignored_depth = 0usize;
         for edge in root.traverse() {
+            if self.stopped {
+                break;
+            }
             match edge {
                 Edge::Open(node) if ignored_depth == 0 => {
                     if let Some(element) = ElementRef::wrap(node) {
-                        ensure!(
-                            self.budget.is_some() || frames.len() < MAX_DEPTH,
-                            "too_large: markup nesting exceeds limit"
-                        );
                         if let Some(frame) = self.enter(element)? {
                             frames.push(frame);
                         } else {
@@ -427,20 +405,17 @@ impl Projection<'_> {
 
     fn finish(&mut self) -> Result<()> {
         self.pending_space = false;
-        if self.text.is_empty() {
+        if self.text.is_empty() || self.stopped {
             return Ok(());
         }
         self.reserve(1024 + 20 * self.emitted_styles.len())?;
-        ensure!(
-            self.budget.is_some() || self.blocks.len() < MAX_BLOCKS,
-            "too_large: too many document blocks"
-        );
         for tag in self.emitted_styles.drain(..).rev() {
             self.fragment.push_str("</");
             self.fragment.push_str(tag);
             self.fragment.push('>');
         }
-        let index = self.blocks.len();
+        let index = self.index;
+        self.index += 1;
         let mut location = json!({"index":index, "role":self.role.name()});
         let mut text = std::mem::take(&mut self.text);
         let mut fragment = std::mem::take(&mut self.fragment);
@@ -460,16 +435,15 @@ impl Projection<'_> {
             Role::Pre => format!("<pre>{fragment}</pre>"),
             _ => format!("<p>{fragment}</p>"),
         };
-        self.bytes = self
-            .bytes
-            .saturating_add(text.len())
-            .saturating_add(html.len());
-        ensure!(
-            self.budget.is_some() || self.bytes <= MAX_TEXT_BYTES,
-            "too_large: formatted text exceeds limit"
-        );
-        self.blocks
-            .push(Block::new(text, location, format!("Block {}", index + 1)).with_html(html));
+        let block = Block::new(text, location, format!("Block {}", index + 1)).with_html(html);
+        self.stopped = !self.visitor.as_mut().expect("projection has a sink")(block)?;
+        // The HTML tree stays live until its projection finishes. A streaming
+        // Markdown search can release the separate output allocation after each block.
+        if self.stream_blocks {
+            if let Some(budget) = self.budget {
+                budget.release(std::mem::take(&mut self.output_reservation));
+            }
+        }
         Ok(())
     }
 }
