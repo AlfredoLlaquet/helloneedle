@@ -3,6 +3,7 @@
 
 use super::word_hyphens::WordHyphens;
 use super::{units, Position};
+use crate::documents::ansi::Ansi;
 use crate::documents::encoding::{binary_controls, marked, windows_controls};
 use anyhow::{ensure, Context, Result};
 use encoding_rs::{DecoderResult, Encoding, UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1252};
@@ -15,7 +16,7 @@ pub(super) const BUFFER: usize = 256 * 1024;
 pub(super) type Charset = Option<&'static Encoding>;
 
 #[derive(Debug)]
-pub(super) struct NotText;
+pub(in crate::documents) struct NotText;
 
 impl fmt::Display for NotText {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -136,6 +137,7 @@ impl Lines {
             self.skip_lf = text.as_bytes()[end] == b'\r';
             self.position.byte += byte_len(encoding, "\n", 1);
             self.position.column = 0;
+            self.position.styled = false;
             self.position.line += 1;
             text = &text[end + 1..];
         }
@@ -147,10 +149,11 @@ impl Lines {
 /// re-enter the decoder at the beginning, preserving its original shift state.
 pub(super) fn walk(
     path: &Path,
-    html: bool,
+    kind: &str,
     seek: Option<(Position, Charset)>,
     mut visit: impl FnMut(&str, Position, Charset, bool) -> Result<bool>,
 ) -> Result<()> {
+    let html = kind == "html";
     let mut file = File::open(path).context("read: could not open text source")?;
     let size = file.metadata()?.len();
     // A preview of declared Windows-1252 HTML must preserve its control
@@ -185,12 +188,25 @@ pub(super) fn walk(
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
     let mut hyphens = word_export.then(|| WordHyphens::new(position.column > 0));
+    let mut ansi = Ansi::default();
     let mut feed = |text: &str, encoding: Charset| {
-        let mut next = |text: &str| lines.chunk(text, encoding, &mut visit);
-        match &mut hyphens {
-            Some(hyphens) => hyphens.chunk(text, next),
-            None => next(text),
+        if html {
+            return lines.chunk(text, encoding, &mut visit);
         }
+        ansi.scan(text, |part, control| {
+            if control {
+                lines.position.styled = true;
+                if kind != "markdown" {
+                    lines.position.byte += byte_len(encoding, part, units(part));
+                    return Ok(true);
+                }
+            }
+            let next = |part: &str| lines.chunk(part, encoding, &mut visit);
+            match &mut hyphens {
+                Some(hyphens) => hyphens.chunk(part, next),
+                None => lines.chunk(part, encoding, &mut visit),
+            }
+        })
     };
     let mut raw = vec![0; capacity];
     let mut decoded = String::new();
@@ -254,6 +270,7 @@ pub(super) fn walk(
             break;
         }
     }
+    ansi.finish()?;
     if let Some(hyphens) = hyphens {
         hyphens.finish()?;
     }

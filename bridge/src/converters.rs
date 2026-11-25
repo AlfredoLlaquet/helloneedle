@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Locate a document tool and its data when launched from an installer or a system package.
 
+pub(crate) mod process;
+
 use std::{
     env,
     path::{Path, PathBuf},

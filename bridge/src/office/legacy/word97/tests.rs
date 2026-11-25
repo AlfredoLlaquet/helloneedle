@@ -74,7 +74,7 @@ fn reordered_unicode_and_compressed_pieces_fields_and_current_main_story() {
 }
 
 #[test]
-fn bad_piece_ranges_incomplete_unicode_and_oversized_cp_counts_have_explicit_errors() {
+fn bad_piece_ranges_incomplete_unicode_and_impossible_cp_counts_have_explicit_errors() {
     let (word, table) = mixed_pieces();
     let mut bad = table.clone();
     let first_fc = 6 + 5 + 7 * 4 + 2;
@@ -93,7 +93,7 @@ fn bad_piece_ranges_incomplete_unicode_and_oversized_cp_counts_have_explicit_err
     assert!(project(&word_bad, &table, &mut Output::default())
         .unwrap_err()
         .to_string()
-        .starts_with("resource_limit:"));
+        .starts_with("corrupt_document:"));
     assert!(grpprl(&[0x00, 0x08, 0x82])
         .unwrap_err()
         .to_string()
@@ -251,4 +251,60 @@ fn remapping_character_styles_reapplies_unstyled_direct_formatting() {
         .apply(&styles, 0, &mut state)
         .unwrap();
     assert!(!state.hidden());
+}
+
+#[test]
+fn random_access_reads_a_word_piece_past_64_mib_and_stops_mid_story() {
+    // The text starts after a sparse, unreferenced portion of the stream.
+    // Describing 40 MiB of story in the piece table must not cause a 40 MiB
+    // allocation or read when the consumer already has its target.
+    use std::fs::OpenOptions;
+    use std::io::{Cursor, Write};
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("hn-word-nr-{}-{stamp}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    let offset = 70 * 1024 * 1024usize;
+    let chars = 40 * 1024 * 1024u32;
+    let mut word = vec![0; 512];
+    store16(&mut word, 32, 14);
+    store16(&mut word, 62, 22);
+    store16(&mut word, 152, 34);
+    store32(&mut word, 76, chars);
+    let mut clx = vec![2, 16, 0, 0, 0];
+    clx.extend(0u32.to_le_bytes());
+    clx.extend(chars.to_le_bytes());
+    clx.extend([0, 0]);
+    clx.extend((0x4000_0000 + 2 * (offset as u32)).to_le_bytes());
+    clx.extend([0, 0]);
+    store32(&mut word, 154 + 33 * 8 + 4, clx.len() as u32);
+    file.write_all(&word).unwrap();
+    file.seek(SeekFrom::Start(offset as u64)).unwrap();
+    file.write_all(b"far target\r").unwrap();
+    file.set_len(offset as u64 + u64::from(chars)).unwrap();
+    let mut found = String::new();
+    let mut visitor = |block: crate::Block| {
+        found = block.text;
+        Ok(false)
+    };
+    let mut out = Output {
+        visitor: Some(&mut visitor),
+        ..Default::default()
+    };
+    let result = project_streams(
+        &mut Indexed::new(&mut file).unwrap(),
+        &mut Indexed::new(&mut Cursor::new(clx)).unwrap(),
+        &mut out,
+    );
+    drop(file);
+    std::fs::remove_file(path).unwrap();
+    assert!(result.unwrap_err().is::<crate::office::EndVisit>());
+    assert_eq!(found, "far target");
 }

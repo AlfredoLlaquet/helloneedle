@@ -94,14 +94,23 @@ impl Page {
         Ok(true)
     }
 
-    fn block(&self, line: Line, ordinal: usize, index: usize, focus: Option<usize>) -> Block {
+    fn block(
+        &self,
+        line: Line,
+        ordinal: usize,
+        index: usize,
+        selection: Option<(usize, usize)>,
+    ) -> Block {
         let location = json!({"index":index, "page":self.number, "pageLine":ordinal});
         let mut block = Block::new(line.text, location, format!("Page {}", self.number));
         if self.mode == Mode::Plain {
             block.location["pdfPlain"] = json!(true);
         }
-        if let Some(focus) = focus {
-            crate::protocol::clip_paragraph(&mut block, focus);
+        if let Some((focus, length)) = selection {
+            if block.text.len() > 256 * 1024 {
+                block.location["lineTextLength"] = json!(block.text.encode_utf16().count());
+                crate::protocol::clip_paragraph(&mut block, focus, length);
+            }
             if self.mode == Mode::Layout {
                 block.location["width"] = json!(self.width);
                 block.location["height"] = json!(self.height);
@@ -116,6 +125,96 @@ impl Page {
             }
         }
         block
+    }
+
+    fn passage(
+        &mut self,
+        line: usize,
+        index: usize,
+        focus: usize,
+        length: usize,
+        pages: usize,
+        complete_match: Option<(usize, usize)>,
+    ) -> Result<(Vec<Block>, usize)> {
+        if self.lines.is_empty() {
+            self.lines.push(Line::default());
+        }
+        ensure!(
+            line <= self.lines.len(),
+            "location: PDF line is outside the page"
+        );
+        let selected = line - 1;
+        let total = self.lines.len();
+        let content = std::mem::take(&mut self.lines[selected]);
+        // A long match can continue beyond this text window. Its entire extent
+        // on the single printed line needs just one rectangle.
+        let mut bounds: Option<[f64; 4]> = None;
+        if let Some((start, end)) = complete_match {
+            for word in &content.words {
+                if word.start < end && word.start + word.length > start {
+                    let edge = [word.x, word.y, word.x + word.w, word.y + word.h];
+                    bounds = Some(bounds.map_or(edge, |b| {
+                        [
+                            b[0].min(edge[0]),
+                            b[1].min(edge[1]),
+                            b[2].max(edge[2]),
+                            b[3].max(edge[3]),
+                        ]
+                    }));
+                }
+            }
+        }
+        let mut selected_block = self.block(content, line, index, Some((focus, length)));
+        if let Some([x, y, right, bottom]) = bounds {
+            selected_block.location["fullMatchBox"] =
+                json!({"x":x, "y":y, "w":right-x, "h":bottom-y});
+        }
+        // Most pages fit in one text view. For unusually dense pages keep the
+        // selected line and disclose which lines the adjacent windows can open.
+        let mut remaining = (1024 * 1024usize).saturating_sub(selected_block.text.len());
+        let mut first = selected;
+        let mut end = line;
+        loop {
+            let before = first;
+            let after = end;
+            if first > 0 {
+                let cost = self.lines[first - 1].text.len() + 128;
+                if cost <= remaining {
+                    remaining -= cost;
+                    first -= 1;
+                }
+            }
+            if end < total {
+                let cost = self.lines[end].text.len() + 128;
+                if cost <= remaining {
+                    remaining -= cost;
+                    end += 1;
+                }
+            }
+            if first == before && end == after {
+                break;
+            }
+        }
+        selected_block.location["pageCount"] = json!(pages);
+        selected_block.location["firstPageLine"] = json!(first + 1);
+        selected_block.location["lastPageLine"] = json!(end);
+        selected_block.location["pageLines"] = json!(total);
+        let mut selected_block = Some(selected_block);
+        let mut blocks = Vec::with_capacity(end - first);
+        for item in first..end {
+            if item == selected {
+                blocks.push(selected_block.take().unwrap());
+            } else {
+                let other = std::mem::take(&mut self.lines[item]);
+                let global = if item < selected {
+                    index.saturating_sub(selected - item)
+                } else {
+                    index.saturating_add(item - selected)
+                };
+                blocks.push(self.block(other, item + 1, global, None));
+            }
+        }
+        Ok((blocks, selected - first))
     }
 }
 
@@ -229,7 +328,12 @@ fn page_count(path: &Path) -> Result<usize> {
 
 /// Extract only the selected page and collect geometry solely for its selected
 /// line. Search locations preserve the source page even in text-only mode.
-pub(crate) fn preview(path: &Path, location: &Value, focus: usize) -> Result<Block> {
+pub(crate) fn preview(
+    path: &Path,
+    location: &Value,
+    focus: usize,
+    length: usize,
+) -> Result<(Vec<Block>, usize)> {
     let index = location
         .get("index")
         .map(|n| {
@@ -271,7 +375,7 @@ pub(crate) fn preview(path: &Path, location: &Value, focus: usize) -> Result<Blo
             Ok(true)
         })?;
         if let Some(known) = found {
-            return preview(path, &known, focus);
+            return preview(path, &known, focus, length);
         }
         if location.get("page").is_none() {
             bail!("location: PDF line is outside the document");
@@ -281,20 +385,18 @@ pub(crate) fn preview(path: &Path, location: &Value, focus: usize) -> Result<Blo
     let count = page_count(path)?;
     ensure!(page <= count, "location: PDF page is outside the document");
     let plain_requested = location["pdfPlain"] == true;
+    let complete_match = location["highlightStart"]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())
+        .zip(
+            location["highlightLength"]
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok()),
+        )
+        .and_then(|(start, length)| start.checked_add(length).map(|end| (start, end)));
     let mut selected = None;
     let mut take = |mut p: Page| -> Result<bool> {
-        let content = if p.lines.is_empty() && line == 1 {
-            Line::default()
-        } else {
-            ensure!(
-                line <= p.lines.len(),
-                "location: PDF line is outside the page"
-            );
-            std::mem::take(&mut p.lines[line - 1])
-        };
-        let mut block = p.block(content, line, index, Some(focus));
-        block.location["pageCount"] = json!(count);
-        selected = Some(block);
+        selected = Some(p.passage(line, index, focus, length, count, complete_match)?);
         // Observe the exit status even after a complete preview page.
         Ok(true)
     };
@@ -316,6 +418,39 @@ mod tests {
     use std::io::{BufReader, Cursor};
 
     #[test]
+    fn text_view_preserves_an_entire_page_and_pages_through_dense_neighbors() {
+        let mut page = Page::new(7, 600.0, 800.0, Mode::Layout);
+        for text in ["before", "chosen", "after"] {
+            page.lines.push(Line {
+                text: text.into(),
+                words: vec![],
+            });
+        }
+        let (blocks, selected) = page.passage(2, 200, 0, 6, 12, None).unwrap();
+        assert_eq!(selected, 1);
+        assert_eq!(
+            blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(),
+            ["before", "chosen", "after"]
+        );
+        assert_eq!(blocks[selected].location["index"], 200);
+        assert_eq!(blocks[0].location["index"], 199);
+        assert_eq!(blocks[selected].location["firstPageLine"], 1);
+        assert_eq!(blocks[selected].location["lastPageLine"], 3);
+
+        let mut dense = Page::new(7, 600.0, 800.0, Mode::Plain);
+        for _ in 0..4 {
+            dense.lines.push(Line {
+                text: "y".repeat(520 * 1024),
+                words: vec![],
+            });
+        }
+        let (blocks, selected) = dense.passage(2, 200, 10_000, 30_000, 12, None).unwrap();
+        assert!(blocks[selected].text.len() >= 30_000);
+        assert_eq!(blocks[selected].location["pageLines"], 4);
+        assert!(blocks[selected].location["lastPageLine"].as_u64().unwrap() < 4);
+    }
+
+    #[test]
     fn layout_coordinates_and_unicode_offsets_are_page_local() {
         let xml = r#"<doc><page width="100" height="200"/><page width="500" height="400"><flow><block><line>
           <word xMin="0" yMin="10" xMax="20" yMax="31">🪡&amp;</word>
@@ -331,7 +466,7 @@ mod tests {
         assert!(pages[0].lines.is_empty());
         let mut page = pages.pop().unwrap();
         let line = page.lines.pop().unwrap();
-        let block = page.block(line, 1, 1, Some(0));
+        let block = page.block(line, 1, 1, Some((0, 0)));
         assert_eq!(block.text, "🪡& needle needle");
         assert_eq!(block.location["page"], 2);
         assert_eq!(block.location["pageLine"], 1);

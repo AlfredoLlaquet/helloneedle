@@ -4,22 +4,19 @@
 #include <QWidget>
 
 class QToolButton;
-class QTreeWidget;
-class QTreeWidgetItem;
 
 namespace hn {
+class ResultBrowser;
 class ResultNavigation final : public QWidget {
 public:
-    ResultNavigation(QTreeWidget *results, QWidget *parent);
+    ResultNavigation(ResultBrowser *results, QWidget *parent);
     void retranslate();
-    void selectMatch(QTreeWidgetItem *item);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    void navigate(int direction, bool byDocument);
-    QTreeWidget *tree;
+    ResultBrowser *browser;
     QList<QToolButton *> buttons;
 };
 }

@@ -14,7 +14,7 @@ use crate::{
     Failure,
 };
 use glob::Pattern;
-use grep_regex::RegexMatcherBuilder;
+use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use std::{
     cell::RefCell,
     io::{self, Write},
@@ -24,26 +24,21 @@ use std::{
     },
 };
 
-const MAX_RESULTS: usize = 10_000;
-
-// Accessed once per read buffer or matching block. The desktop owns an entire worker
-// process group. This token also stops competing readers when the result limit is reached.
+// Readers, including their converter monitors, share the request's cancellation
+// flag. A broken output pipe must also release readers still waiting on a converter.
 thread_local! {
     static CANCEL: RefCell<Option<Arc<FileCancellation>>> = const { RefCell::new(None) };
 }
-pub(crate) struct FileCancellation {
-    requested: Arc<AtomicBool>,
-    observed: AtomicBool,
-}
 
+#[derive(Default)]
+pub(crate) struct FileCancellation(AtomicBool);
 impl FileCancellation {
     pub(crate) fn stopped(&self) -> bool {
-        if self.requested.load(Ordering::Relaxed) {
-            self.observed.store(true, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn stop(&self) {
+        self.0.store(true, Ordering::Relaxed);
     }
 }
 
@@ -61,6 +56,14 @@ pub(crate) fn checkpoint() -> io::Result<()> {
     } else {
         Ok(())
     }
+}
+
+// The matcher and its streaming requirements are compiled once per request.
+// Each reader thread gets an independent matcher cache and the same width.
+#[derive(Clone)]
+struct SearchQuery {
+    matcher: RegexMatcher,
+    window_width: Option<usize>,
 }
 
 pub(crate) fn run<W: Write>(req: SearchRequest, sink: &mut Emitter<W>) -> io::Result<()> {
@@ -95,5 +98,9 @@ pub(crate) fn run<W: Write>(req: SearchRequest, sink: &mut Emitter<W>) -> io::Re
             Some(&folder),
         );
     }
-    pool::run(&req, &folder, matcher, pattern, sink)
+    let query = SearchQuery {
+        matcher,
+        window_width: crate::documents::text_stream::window_width(&req.query, req.regex, req.case_sensitive),
+    };
+    pool::run(&req, &folder, query, pattern, sink)
 }

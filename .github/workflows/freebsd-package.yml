@@ -36,7 +36,7 @@ jobs:
           envs: 'GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA GITHUB_RUN_NUMBER GITHUB_RUN_ATTEMPT CARGO_BUILD_JOBS HN_FREEBSD_RELEASE HN_DEVELOPMENT'
           prepare: |
             set -eu
-            pkg install -y git cmake ninja rust qt6-base qt6-svg qt6-translations poppler-utils antiword python3 \
+            pkg install -y git cmake ninja rust sqlite3 qt6-base qt6-svg qt6-translations poppler-utils antiword python3 \
               xorg-vfbserver openbox dbus dejavu
             dbus-uuidgen --ensure
           run: |

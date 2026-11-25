@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from tempfile import TemporaryFile
 import time
 
 from document_fixtures import write_documents
@@ -41,19 +42,59 @@ def verify_equivalence(worker, folder, exchange, retained_matches):
     assert responses[0] == responses[1] == responses[2], "Serial/parallel results differ"
 
 
-def verify_result_limit(worker, folder, exchange):
+def verify_all_occurrences(worker, folder):
     folder.mkdir()
-    count = 10000
-    for file_number in range(4):
-        (folder / f"{file_number}.txt").write_bytes(b"Needle\n" * (count // 4))
-    for truncated in (False, True):
-        if truncated:
-            (folder / "last.txt").write_bytes(b"Needle")
-        events = exchange(worker, "search", {"folder": str(folder), "query": "Needle", "searchWorkers": 4})
-        hits = [e for e in events if e["type"] == "match"]
-        unique = {(e["path"], e["location"]["index"]) for e in hits}
-        assert events[-1]["count"] == len(hits) == len(unique) == count, events[-1]
-        assert events[-1]["truncated"] == truncated, events[-1]
+    expected = {f"{number}.txt": 1_000 for number in range(4)}
+    for name, count in expected.items():
+        (folder / name).write_bytes(b"Needle\n" * count)
+    sentinel = "zz-sentinel.txt"
+    # This distinct hit follows 96,000 others in its own file regardless of
+    # filesystem traversal order or concurrent scheduling.
+    (folder / sentinel).write_bytes(b"Needle\n" * 96_000 + b"Needle at the end of the last-sorted file.\n")
+    expected[sentinel] = 96_001
+    for workers in (1, 4):
+        request = {"folder": str(folder), "query": "Needle", "searchWorkers": workers}
+        seen = defaultdict(int)
+        found_sentinel = False
+        done = None
+        # A large test should not need space in Python's heap for every JSON object.
+        with TemporaryFile() as stream:
+            subprocess.run([worker, "search"], input=json.dumps(request).encode(),
+                           stdout=stream, check=True, timeout=180)
+            stream.seek(0)
+            for line in stream:
+                event = json.loads(line)
+                kind = event["type"]
+                assert done is None, "Events followed the completion record"
+                if kind == "match":
+                    name = event["displayPath"]
+                    assert name in expected and event["location"]["index"] == seen[name], event
+                    seen[name] += 1
+                    if name == sentinel and seen[name] == expected[name]:
+                        assert event["text"] == "Needle at the end of the last-sorted file.", event
+                        found_sentinel = True
+                elif kind == "done":
+                    done = event
+                else:
+                    assert kind == "progress", event
+        assert seen == expected, seen
+        assert done == {"type": "done", "count": 100_001, "errors": 0, "files": 5,
+                        "documentsScanned": 5, "truncated": False}, done
+        assert found_sentinel
+
+
+def verify_all_errors(worker, folder, exchange):
+    folder.mkdir()
+    expected = {f"bad-{i:03}.docx" for i in range(1, 491)}
+    for name in expected:
+        (folder / name).write_bytes(b"incomplete")
+    (folder / "zz-readable.txt").write_bytes(b"Needle")
+    events = exchange(worker, "search", {"folder": str(folder), "query": "Needle"}, allow_errors=True)
+    errors = [Path(event["path"]).name for event in events if event["type"] == "error"]
+    assert len(errors) == 490 and set(errors) == expected
+    assert [event["displayPath"] for event in events if event["type"] == "match"] == ["zz-readable.txt"]
+    assert events[-1] == {"type": "done", "errors": 490, "count": 1, "files": 491,
+                          "documentsScanned": 1, "truncated": False}, events[-1]
 
 
 def wait_for(predicate, description, timeout=15):
@@ -74,7 +115,7 @@ def controlled_decoder(args):
     if name in ("flood", "refill"):
         prerequisite = "blocked.start" if name == "flood" else "begin-refill"
         wait_for(lambda: (gate / prerequisite).exists(), "the competing PDF")
-        count = 10001 if name == "flood" else 9999
+        count = 20_000 if name == "flood" else 10_009
         print(start_page + line * count + "</page></doc>", flush=True)
     else:
         # A closed page makes a hit visible before the converter has finished.
@@ -90,7 +131,7 @@ def controlled_decoder(args):
 
 
 @contextmanager
-def live_search(worker, folder, gate, **options):
+def live_search(worker, folder, gate, close_after_matches=None, **options):
     gate.mkdir()
     with subprocess.Popen([str(worker), "search"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           start_new_session=True, env=dict(os.environ, HN_TEST_PDF_GATE=str(gate))) as process:
@@ -99,8 +140,15 @@ def live_search(worker, folder, gate, **options):
         events = []
 
         def collect():
+            count = 0
             for line in process.stdout:
-                events.append(json.loads(line))
+                event = json.loads(line)
+                events.append(event)
+                if event["type"] == "match":
+                    count += 1
+                    if count == close_after_matches:
+                        process.stdout.close()
+                        return
 
         with ThreadPoolExecutor(max_workers=1) as reader:
             result = reader.submit(collect)
@@ -125,8 +173,7 @@ def check_pdf_slots(worker, folder, gate, workers, slots, retained_matches):
         wait_for(lambda: len(list(gate.glob("*.start"))) >= expected, "concurrent PDF conversions")
         if workers > expected:
             wait_for(lambda: any(e.get("kind") == "text" for e in events), "the ordinary text match")
-        wait_for(lambda: any(e.get("kind") == "pdf" and e["path"].endswith("-bad.pdf") for e in events),
-                 "the incomplete document's provisional hit")
+        wait_for(lambda: any(e.get("kind") == "pdf" for e in events), "a provisional PDF hit")
         assert len(list(gate.glob("*.start"))) == expected
         (gate / "release").touch()
         assert process.wait(timeout=15) == 0
@@ -140,22 +187,22 @@ def check_pdf_slots(worker, folder, gate, workers, slots, retained_matches):
         active += change
         assert 0 <= active <= expected, "PDFs exceeded the configured cap"
     matches = retained_matches(events)
+    assert any(e.get("kind") == "pdf" and e["path"].endswith("-bad.pdf") for e in events)
     surviving_bad = [e for e in matches if e["path"].endswith("-bad.pdf")]
     assert [e["kind"] for e in surviving_bad] == ["filename"] and events[-1]["errors"] == 1, events[-1]
     assert events[-1]["count"] == len(matches) == events[-1]["files"] == 7, events[-1]
 
 
-def check_cancel_at_capacity(worker, root):
+def check_closed_output_cancels(worker, root):
     folder = root / "active cancellation"
     gate = root / "cancellation gate"
     folder.mkdir()
     for name in ("blocked.pdf", "flood.pdf"):
         (folder / name).touch()
-    with live_search(worker, folder, gate, searchWorkers=2, pdfConversions=2) as (process, events):
-        wait_for(lambda: (gate / "flood.start").exists(), "the result-producing PDF")
-        # A blocked decoder never responds on its own. Reaching the global cap
-        # must stop and reap it without waiting for the converter idle watchdog.
-        assert process.wait(timeout=15) == 0, "Worker did not finish at the global limit"
+    with live_search(worker, folder, gate, close_after_matches=10_001,
+                     searchWorkers=2, pdfConversions=2) as (process, events):
+        # Closing the pipe while another converter waits should reap both readers.
+        assert process.wait(timeout=30) == 0, "Worker did not finish after its client disconnected"
         pid = int((gate / "blocked.start").read_text().split()[1])
         try:
             os.kill(pid, 0)
@@ -163,11 +210,11 @@ def check_cancel_at_capacity(worker, root):
             pass
         else:
             raise AssertionError("The search left its blocked Poppler subprocess behind")
-    assert events[-1]["type"] == "done" and events[-1]["truncated"], events[-1]
-    assert events[-1]["count"] == 10000 and events[-1]["errors"] == 0, events[-1]
+    assert sum(e["type"] == "match" for e in events) == 10_001
+    assert events[-1]["type"] == "match", events[-1]
 
 
-def check_changed_at_capacity(worker, root, retained_matches):
+def check_changed_during_large_search(worker, root, retained_matches):
     folder = root / "late revision change"
     gate = root / "revision gate"
     folder.mkdir()
@@ -178,26 +225,27 @@ def check_changed_at_capacity(worker, root, retained_matches):
                      filenames=True) as (process, events):
         wait_for(lambda: any(e.get("kind") == "pdf" and e["path"] == str(changed) for e in events),
                  "the first revision's provisional hit")
-        # Before the competing PDF reaches the cap, invalidate the original PDF.
-        # One filename and 9,999 valid lines remain, so the final result is exact.
+        # Both readers must complete even after one file's provisional hit is withdrawn.
         changed.write_bytes(b"changed revision")
         (gate / "begin-refill").touch()
+        (gate / "release").touch()
         assert process.wait(timeout=15) == 0
     hits = retained_matches(events)
     assert [(e["code"], e["path"]) for e in events if e["type"] == "error"] == [("changed", str(changed))]
     assert [h["kind"] for h in hits if h["path"] == str(changed)] == ["filename"]
     valid_lines = [h["location"]["index"] for h in hits if h["kind"] == "pdf"]
-    assert valid_lines == list(range(9999)), "Missing, repeated, or reordered hits after resuming"
+    assert valid_lines == list(range(10_009)), "Missing, repeated, or reordered hits in the other file"
     done = events[-1]
-    assert (done["count"], done["truncated"], done["files"], done["documentsScanned"]) == (10000, False, 2, 1), done
+    assert (done["count"], done["truncated"], done["files"], done["documentsScanned"]) == (10_010, False, 2, 1), done
 
 
 def verify_parallel(worker, root, exchange, retained_matches):
     root.mkdir()
     verify_equivalence(worker, root / "equivalence", exchange, retained_matches)
-    verify_result_limit(worker, root / "result limit", exchange)
+    verify_all_occurrences(worker, root / "large result set")
+    verify_all_errors(worker, root / "diagnostics", exchange)
     print("Serial, automatic and manual searches agree on every occurrence, file/error counts and rollback.")
-    print("10,000 exact matches and a global overflow verified across independent files.")
+    print("100,001 occurrences and the final file verified in serial and parallel; 490 distinct errors retained.")
     if os.name != "posix":
         return
     available = int(subprocess.check_output([worker, "--parallelism"], text=True))
@@ -218,8 +266,8 @@ def verify_parallel(worker, root, exchange, retained_matches):
     check_pdf_slots(worker, folder, root / "one slot", workers, 1, retained_matches)
     check_pdf_slots(worker, folder, root / "automatic slots", workers, 0, retained_matches)
     if workers >= 2:
-        check_cancel_at_capacity(worker, root)
-        check_changed_at_capacity(worker, root, retained_matches)
+        check_closed_output_cancels(worker, root)
+        check_changed_during_large_search(worker, root, retained_matches)
     print(f"Isolated PDF processes checked with {workers} available search worker(s).")
 
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Exercise the live protocol at the boundary where a changed file frees result slots.
+//! Exercise per-file rollback while other readers continue to emit occurrences.
 use crate::protocol;
 use serde_json::{json, Value};
 use std::{
@@ -63,10 +63,10 @@ impl Write for ChangeDuringSearch {
 }
 
 #[test]
-fn result_cap_reconciles_changed_content_without_losing_names_or_other_files() {
+fn changed_content_is_withdrawn_without_losing_names_or_other_files() {
     for stable_lines in [7_013, 10_009] {
         let dir = std::env::temp_dir().join(format!(
-            "hn-cap-revision-{}-{stable_lines}",
+            "hn-file-revision-{}-{stable_lines}",
             std::process::id()
         ));
         fs::create_dir(&dir).unwrap();
@@ -90,17 +90,18 @@ fn result_cap_reconciles_changed_content_without_losing_names_or_other_files() {
         assert_eq!(output.retained[changed], [("filename".into(), 0)]);
         let stable_hits = &output.retained[stable];
         assert_eq!(stable_hits[0].0, "filename");
-        let total = (stable_lines + 2).min(10_000);
+        let total = stable_lines + 2;
         assert_eq!(stable_hits.len() + 1, total);
         for (index, (kind, actual)) in stable_hits[1..].iter().enumerate() {
             assert_eq!(kind, "text");
             assert_eq!(
                 index, *actual,
-                "An occurrence was duplicated or missed on replay"
+                "An occurrence from the stable file was duplicated or missed"
             );
         }
         assert_eq!(output.done["count"], total);
         assert_eq!(output.done["files"], 2);
-        assert_eq!(output.done["truncated"], stable_lines + 2 > total);
+        assert_eq!(output.done["documentsScanned"], 1);
+        assert_eq!(output.done["truncated"], false);
     }
 }

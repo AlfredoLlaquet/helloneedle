@@ -9,6 +9,7 @@ class QProcess;
 class QLabel;
 class QScrollArea;
 class QToolButton;
+class QTimer;
 
 namespace hn {
 class PdfPane : public QWidget {
@@ -23,6 +24,10 @@ protected:
 private:
     void goTo(int page);
     void draw(bool centerMatch);
+    void scheduleDetail();
+    void renderDetail();
+    void startRaster(int longSide, const QRect &crop, const QRect &logical, double pixelRatio);
+    QRectF annotate(QImage &canvas, const QSizeF &fullSize, const QPointF &origin) const;
     void centerPendingMatch();
     void cancel();
     QString zoomFile;
@@ -31,7 +36,10 @@ private:
     QJsonObject spot;
     QImage raster;
     QProcess *job = nullptr;
+    QProcess *detailJob = nullptr;
+    QTimer *detailTimer;
     QLabel *image;
+    QLabel *detail;
     QLabel *pageLabel;
     QScrollArea *scroller;
     QToolButton *previous;

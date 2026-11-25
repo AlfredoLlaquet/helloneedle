@@ -22,6 +22,23 @@
 #endif
 
 namespace hn {
+namespace {
+// A single cropped render follows the viewport. A small whole-page image
+// remains available while Poppler draws new detail after scrolling or zoom.
+constexpr int overviewPixels = 1800;
+void stopRender(QProcess *&process, QObject *receiver)
+{
+    auto *old = process;
+    process = nullptr;
+    if (!old) return;
+    old->disconnect(receiver);
+    if (old->state() != QProcess::NotRunning) {
+        QObject::connect(old, &QProcess::finished, old, &QObject::deleteLater);
+        old->kill();
+    } else old->deleteLater();
+}
+}
+
 PdfPane::PdfPane(QWidget *parent) : QWidget(parent)
 {
     setObjectName("pdfPane");
@@ -51,6 +68,16 @@ PdfPane::PdfPane(QWidget *parent) : QWidget(parent)
     image->setObjectName("pdfImage");
     image->setAlignment(Qt::AlignCenter);
     image->setWordWrap(true);
+    detail = new QLabel(image);
+    detail->setObjectName("pdfDetailRaster");
+    detail->setScaledContents(true);
+    detail->setAttribute(Qt::WA_TransparentForMouseEvents);
+    detail->hide();
+    detailTimer = new QTimer(this);
+    detailTimer->setSingleShot(true);
+    connect(detailTimer, &QTimer::timeout, this, &PdfPane::renderDetail);
+    connect(scroller->horizontalScrollBar(), &QScrollBar::valueChanged, this, [this] { scheduleDetail(); });
+    connect(scroller->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { scheduleDetail(); });
     scroller->setWidget(image);
     layout->addWidget(scroller);
     connect(previous, &QToolButton::clicked, this, [this]{ goTo(page - 1); });
@@ -59,7 +86,10 @@ PdfPane::PdfPane(QWidget *parent) : QWidget(parent)
     auto changeZoom = [this](double multiplier) {
         if (raster.isNull()) return;
         if (fitToPage) zoom = double(image->width()) / raster.width();
-        zoom = std::clamp(zoom * multiplier, 0.08, 3.0);
+        // Both Qt widget geometry and Poppler crop coordinates must remain
+        // representable. Pixel allocations depend on the viewport, not zoom.
+        const double longest = qMax(raster.width(), raster.height());
+        zoom = std::clamp(zoom * multiplier, 1. / longest, (QWIDGETSIZE_MAX - 1.) / longest);
         fitToPage = false;
         draw(true);
     };
@@ -86,14 +116,11 @@ void PdfPane::retranslate()
 
 void PdfPane::cancel()
 {
-    if (!job) return;
-    auto *old = job;
-    job = nullptr;
-    old->disconnect(this);
-    if (old->state() != QProcess::NotRunning) {
-        connect(old, &QProcess::finished, old, &QObject::deleteLater);
-        old->kill();
-    } else old->deleteLater();
+    detailTimer->stop();
+    stopRender(job, this);
+    stopRender(detailJob, this);
+    detail->clear();
+    detail->hide();
 }
 
 void PdfPane::clear()
@@ -136,13 +163,19 @@ void PdfPane::goTo(int target)
     previous->setEnabled(page > 1);
     next->setEnabled(page < pages);
     pageLabel->setText(ui("Page %1 of %2").arg(page).arg(pages));
+    startRaster(overviewPixels, {}, {}, 1.);
+}
+
+void PdfPane::startRaster(int longSide, const QRect &crop, const QRect &logical, double pixelRatio)
+{
+    const bool cropped = !crop.isEmpty();
     const auto program = findTool("pdftoppm");
     if (program.isEmpty()) {
         image->setText(ui("PDF page rendering requires Poppler (pdftoppm)."));
         return;
     }
     auto *p = new QProcess(this);
-    job = p;
+    (cropped ? detailJob : job) = p;
     configurePdfRenderer(*p, program);
     p->setStandardErrorFile(QProcess::nullDevice());
     const QString file = hit.value("path").toString();
@@ -160,61 +193,89 @@ void PdfPane::goTo(int target)
         argument = QStringLiteral("-");
     }
 #endif
-    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError err) {
-        if (p == job && err == QProcess::FailedToStart) {
-            image->setText(ui("The PDF page could not be rendered."));
-            cancel();
+    connect(p, &QProcess::errorOccurred, this, [this, p, cropped](QProcess::ProcessError err) {
+        auto &active = cropped ? detailJob : job;
+        if (p == active && err == QProcess::FailedToStart) {
+            if (!cropped) image->setText(ui("The PDF page could not be rendered."));
+            stopRender(active, this);
         }
     });
-    connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus status) {
-        if (p != job) return;
+    connect(p, &QProcess::finished, this, [this, p, crop, logical, cropped, pixelRatio](int code, QProcess::ExitStatus status) {
+        auto &active = cropped ? detailJob : job;
+        if (p != active) return;
+        QImage result;
         if (code == 0 && status == QProcess::NormalExit)
-            raster = QImage::fromData(p->readAllStandardOutput(), "PNG");
-        cancel();
-        if (raster.isNull()) image->setText(ui("The PDF page could not be rendered."));
-        else draw(true);
+            result = QImage::fromData(p->readAllStandardOutput(), "PNG");
+        stopRender(active, this);
+        if (cropped) {
+            if (result.isNull()) return;
+            annotate(result, QSizeF(image->size()) * pixelRatio, crop.topLeft());
+            detail->setGeometry(logical);
+            detail->setPixmap(QPixmap::fromImage(result));
+            detail->show();
+        } else {
+            raster = result;
+            if (raster.isNull()) image->setText(ui("The PDF page could not be rendered."));
+            else draw(true);
+        }
     });
-    p->start(program, {"-f", QString::number(page), "-l", QString::number(page),
-                       "-singlefile", "-scale-to", "1800", "-png", argument}, QIODevice::ReadOnly);
+    QStringList options{"-f", QString::number(page), "-l", QString::number(page),
+                        "-singlefile", "-scale-to", QString::number(longSide)};
+    if (cropped) options << "-x" << QString::number(crop.x()) << "-y" << QString::number(crop.y())
+                         << "-W" << QString::number(crop.width()) << "-H" << QString::number(crop.height());
+    options << "-png" << argument;
+    p->start(program, options, QIODevice::ReadOnly);
+}
+
+QRectF PdfPane::annotate(QImage &canvas, const QSizeF &fullSize, const QPointF &origin) const
+{
+    double width = spot.value("width").toDouble(), height = spot.value("height").toDouble();
+    const double ratio = double(raster.width()) / raster.height();
+    if (width > 0 && height > 0 && std::abs(ratio - height/width) < std::abs(ratio - width/height))
+        std::swap(width, height);
+    QRectF selection;
+    if (page == spot.value("page").toInt() && width > 0 && height > 0 && hit.value("kind") != "filename") {
+        const auto begin = hit.value("blockStart").toInteger(hit.value("start").toInteger());
+        const auto end = begin + hit.value("blockLength").toInteger(hit.value("length").toInteger());
+        QPainter painter(&canvas);
+        painter.translate(-origin);
+        painter.setPen(QPen(QColor(130, 66, 0), 2));
+        painter.setBrush(QColor(255, 198, 49, 105));
+        auto highlight = [&](const QJsonObject &word) {
+            const double sx = fullSize.width() / width, sy = fullSize.height() / height;
+            const QRectF rect(word.value("x").toDouble()*sx, word.value("y").toDouble()*sy,
+                              word.value("w").toDouble()*sx, word.value("h").toDouble()*sy);
+            painter.drawRect(rect);
+            selection = selection.united(rect);
+        };
+        if (const auto full = spot.value("fullMatchBox").toObject(); !full.isEmpty()) {
+            highlight(full);
+        } else for (const auto &entry : spot.value("words").toArray()) {
+            const QJsonObject word = entry.toObject();
+            const auto start = word.value("start").toInteger();
+            if (start < end && start + word.value("length").toInteger() > begin) highlight(word);
+        }
+    }
+    return selection;
 }
 
 void PdfPane::draw(bool centerMatch)
 {
     if (raster.isNull()) return;
-    QSize available = scroller->viewport()->size() - QSize(8, 8);
+    const QSize available = scroller->viewport()->size() - QSize(8, 8);
     const QSize size = fitToPage ? raster.size().scaled(available.expandedTo({1,1}), Qt::KeepAspectRatio)
-                                 : raster.size() * zoom;
+                                 : (raster.size() * zoom).expandedTo({1,1});
     if (size.isEmpty()) return;
-    double width = spot.value("width").toDouble(), height = spot.value("height").toDouble();
-    const double ratio = double(raster.width()) / raster.height();
-    if (width > 0 && height > 0 && std::abs(ratio - height/width) < std::abs(ratio - width/height))
-        std::swap(width, height);
-    // Annotate the source raster first. Resizing a normal window never
-    // changes the location recorded in the original PDF coordinate space.
+    stopRender(detailJob, this);
+    detail->hide();
     QImage annotated = raster;
-    QRectF selection;
-    if (page == spot.value("page").toInt() && width > 0 && height > 0 && hit.value("kind") != "filename") {
-        const int begin = hit.value("blockStart").toInt(hit.value("start").toInt());
-        const int end = begin + hit.value("blockLength").toInt(hit.value("length").toInt());
-        QPainter painter(&annotated);
-        painter.setPen(QPen(QColor(130, 66, 0), 2));
-        painter.setBrush(QColor(255, 198, 49, 105));
-        for (const auto &entry : spot.value("words").toArray()) {
-            const QJsonObject word = entry.toObject();
-            const int start = word.value("start").toInt();
-            if (start >= end || start + word.value("length").toInt() <= begin) continue;
-            const double sx = raster.width() / width, sy = raster.height() / height;
-            const QRectF rect(word.value("x").toDouble()*sx, word.value("y").toDouble()*sy,
-                              word.value("w").toDouble()*sx, word.value("h").toDouble()*sy);
-            painter.drawRect(rect);
-            selection = selection.united(rect);
-        }
-    }
+    const QRectF selection = annotate(annotated, raster.size(), {});
     const double dpr = qMin(image->devicePixelRatioF(), 4096.0 / qMax(size.width(), size.height()));
     QPixmap pixmap = QPixmap::fromImage(annotated.scaled(size * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     pixmap.setDevicePixelRatio(dpr);
     image->setPixmap(pixmap);
     image->resize(size);
+    scheduleDetail();
     if (centerMatch) {
         pendingCenter.reset();
         if (!fitToPage && !selection.isEmpty()) {
@@ -224,6 +285,31 @@ void PdfPane::draw(bool centerMatch)
             QTimer::singleShot(0, this, &PdfPane::centerPendingMatch);
         }
     }
+}
+
+void PdfPane::scheduleDetail()
+{
+    if (!raster.isNull() && scroller->isVisible()) detailTimer->start(35);
+}
+
+void PdfPane::renderDetail()
+{
+    if (raster.isNull() || !isVisible()) return;
+    const auto *viewport = scroller->viewport();
+    const QRect visible = image->rect().intersected(QRect(image->mapFrom(viewport, QPoint()), viewport->size()));
+    if (visible.isEmpty()) return;
+    // Bound one tile to at most 4096 by 4096 physical pixels, regardless of
+    // the document's dimensions. A large zoom only moves the crop coordinates.
+    const double deviceScale = qMin(image->devicePixelRatioF(),
+        4096. / qMax(visible.width(), visible.height()));
+    const int longSide = qRound(qMax(image->width(), image->height()) * deviceScale);
+    if (longSide <= qMax(raster.width(), raster.height())) return;
+    const int x = qFloor(visible.x() * deviceScale);
+    const int y = qFloor(visible.y() * deviceScale);
+    const QRect crop(x, y, qMax(1, qCeil((visible.x()+visible.width())*deviceScale)-x),
+                     qMax(1, qCeil((visible.y()+visible.height())*deviceScale)-y));
+    stopRender(detailJob, this);
+    startRaster(longSide, crop, visible, deviceScale);
 }
 
 void PdfPane::centerPendingMatch()
@@ -240,8 +326,11 @@ void PdfPane::centerPendingMatch()
 
 bool PdfPane::eventFilter(QObject *object, QEvent *event)
 {
-    if (object == scroller->viewport() && event->type() == QEvent::Resize && fitToPage)
-        draw(false);
+    if (object == scroller->viewport() && event->type() == QEvent::Resize) {
+        if (fitToPage) draw(false);
+        else scheduleDetail();
+    }
+    if (object == scroller->viewport() && event->type() == QEvent::Show) scheduleDetail();
     if (object == scroller->viewport() && event->type() == QEvent::Show && pendingCenter)
         QTimer::singleShot(0, this, &PdfPane::centerPendingMatch);
     return QWidget::eventFilter(object, event);

@@ -78,11 +78,11 @@ def packaged_icons(work, prefix):
 def system_packages():
     if SYSTEM == "Linux":
         return output(["dpkg-query", "-W", "-f=${binary:Package} ${Version}\\n",
-                       "qt6-base-dev", "qt6-svg-dev", "qt6-qpa-plugins", "qt6-translations-l10n", "poppler-utils", "antiword"])
+                       "libsqlite3-dev", "qt6-base-dev", "qt6-svg-dev", "qt6-qpa-plugins", "qt6-translations-l10n", "poppler-utils", "antiword"])
     if SYSTEM == "FreeBSD":
-        return output(["pkg", "query", "%n %v", "qt6-base", "qt6-svg", "qt6-translations", "poppler-utils", "antiword"])
+        return output(["pkg", "query", "%n %v", "sqlite3", "qt6-base", "qt6-svg", "qt6-translations", "poppler-utils", "antiword"])
     if SYSTEM == "Darwin":
-        ports = ["qt6-qtbase", "qt6-qtsvg", "qt6-qttranslations", "poppler", "antiword"]
+        ports = ["sqlite3", "qt6-qtbase", "qt6-qtsvg", "qt6-qttranslations", "poppler", "antiword"]
         installed = output(["/opt/local/bin/port", "-q", "installed", *ports])
         # MacPorts keeps inactive revisions after upgrades. Record the versions in use.
         active = {line.split()[0]: line.strip() for line in installed.splitlines() if line.endswith(" (active)")}
@@ -90,7 +90,7 @@ def system_packages():
         if missing:
             raise SystemExit("MacPorts has no active installation for " + ", ".join(missing))
         return "\n".join(active[name] for name in ports)
-    managed = ["mingw-w64-ucrt-x86_64-" + name for name in ("qt6-base", "qt6-svg", "qt6-translations", "poppler", "antiword")]
+    managed = ["mingw-w64-ucrt-x86_64-" + name for name in ("sqlite3", "qt6-base", "qt6-svg", "qt6-translations", "poppler", "antiword")]
     # MSYS2 has both combined and split GCC runtime packages. Ask about the actual DLLs.
     runtime = output(["pacman", "-Qqo", "/ucrt64/bin/libgcc_s_seh-1.dll", "/ucrt64/bin/libstdc++-6.dll",
                       "/ucrt64/bin/libwinpthread-1.dll"]).splitlines()
@@ -176,7 +176,7 @@ def debian(stage, bindir, dist, version):
 
 def freebsd(stage, dist, work, version):
     deps = {}
-    for name in ("qt6-base", "qt6-svg", "qt6-translations", "poppler-utils", "antiword"):
+    for name in ("sqlite3", "qt6-base", "qt6-svg", "qt6-translations", "poppler-utils", "antiword"):
         origin, installed = output(["pkg", "query", "%o %v", name]).split()
         deps[name] = {"origin": origin, "version": installed}
     package_files = {}

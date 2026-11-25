@@ -11,9 +11,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{fs, path::Path};
 
-pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_BLOCKS: usize = 200_000;
 
 /// The GUI's Automatic label and the search worker use the same CPU allowance.
 pub fn available_processors() -> usize {
@@ -133,13 +131,9 @@ enum Reader {
     Lines(&'static str),
     Pdf,
     Docx,
-    Buffered(BufferedReader),
-}
-
-enum BufferedReader {
-    Html,
+    Office(&'static str),
     Markdown,
-    Office(String),
+    Html,
 }
 
 impl Reader {
@@ -152,14 +146,17 @@ impl Reader {
         match extension.as_str() {
             "pdf" => Self::Pdf,
             "docx" => Self::Docx,
-            "xlsx" | "pptx" | "odt" | "ods" | "odp" | "fodt" | "doc" | "rtf" => {
-                Self::Buffered(BufferedReader::Office(extension))
-            }
-            "html" | "htm" | "xhtml" if mode == "document" => Self::Buffered(BufferedReader::Html),
+            "xlsx" => Self::Office("xlsx"),
+            "pptx" => Self::Office("pptx"),
+            "odt" => Self::Office("odt"),
+            "ods" => Self::Office("ods"),
+            "odp" => Self::Office("odp"),
+            "fodt" => Self::Office("fodt"),
+            "doc" => Self::Office("doc"),
+            "rtf" => Self::Office("rtf"),
+            "html" | "htm" | "xhtml" if mode == "document" => Self::Html,
             "html" | "htm" | "xhtml" => Self::Lines("html"),
-            "md" | "markdown" | "mdown" | "mkd" | "mkdn" if mode == "document" => {
-                Self::Buffered(BufferedReader::Markdown)
-            }
+            "md" | "markdown" | "mdown" | "mkd" | "mkdn" if mode == "document" => Self::Markdown,
             "md" | "markdown" | "mdown" | "mkd" | "mkdn" => Self::Lines("markdown"),
             // Formats without a text reader. Ambiguous extensions and extensionless
             // files go to the buffered text probe, so scripts and logs stay searchable.
@@ -177,37 +174,15 @@ impl Reader {
     }
 }
 
-impl BufferedReader {
-    fn read(&self, path: &Path) -> Result<Document, Failure> {
-        let doc = match self {
-            Self::Html => documents::read_html(path).map_err(Failure::decoder)?,
-            Self::Markdown => documents::read_markdown(path).map_err(Failure::decoder)?,
-            Self::Office(ext) => office::extract(path, ext)
-                .map_err(Failure::decoder)?
-                .ok_or_else(|| {
-                    Failure::new("unsupported_document", "Unsupported Office document")
-                })?,
-        };
-        if !matches!(self, Self::Html) {
-            let bytes = doc
-                .blocks
-                .iter()
-                .fold(0usize, |size, b| size.saturating_add(b.text.len()));
-            if bytes > MAX_TEXT_BYTES || doc.blocks.len() > MAX_BLOCKS {
-                return Err(Failure::new(
-                    "limit",
-                    "Extracted document exceeds the text or block limit",
-                ));
-            }
-        }
-        if !doc
-            .blocks
-            .iter()
-            .enumerate()
-            .all(|(i, b)| b.location["index"].as_u64() == Some(i as u64))
-        {
-            return Err(Failure::new("format", "Invalid document block location"));
-        }
-        Ok(doc)
+fn html_document(path: &Path) -> Result<Document, Failure> {
+    let doc = documents::read_html(path).map_err(Failure::decoder)?;
+    if !doc
+        .blocks
+        .iter()
+        .enumerate()
+        .all(|(i, b)| b.location["index"].as_u64() == Some(i as u64))
+    {
+        return Err(Failure::new("format", "Invalid document block location"));
     }
+    Ok(doc)
 }

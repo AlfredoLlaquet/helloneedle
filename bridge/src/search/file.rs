@@ -10,9 +10,9 @@ use crate::{
 };
 
 use grep_matcher::Matcher;
-use grep_regex::RegexMatcher;
 
-use super::pool::{Event, Job, Progress, Report};
+use super::pool::Event;
+use super::SearchQuery;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{io, path::Path, sync::mpsc::SyncSender};
@@ -48,7 +48,7 @@ struct FileSearch<'a> {
     identity: paths::Identity,
     display_path: &'a str,
     mode: &'a str,
-    matcher: &'a RegexMatcher,
+    query: &'a SearchQuery,
     revision: Option<&'a str>,
 }
 
@@ -77,19 +77,10 @@ impl FileSearch<'_> {
         label: &str,
         location: &Value,
         excerpt: Excerpt<'_>,
-        output: &mut FileOutput<'_>,
+        output: &FileOutput<'_>,
     ) -> io::Result<bool> {
         if super::stopped() {
             return Ok(false);
-        }
-        let skipped = if kind == "filename" {
-            &mut output.skip.names
-        } else {
-            &mut output.skip.content
-        };
-        if *skipped != 0 {
-            *skipped -= 1;
-            return Ok(true);
         }
         let event = MatchEvent {
             r#type: "match",
@@ -120,12 +111,13 @@ impl FileSearch<'_> {
         label: &str,
         location: &Value,
         text: &str,
-        sink: &mut FileOutput,
+        sink: &FileOutput,
     ) -> io::Result<()> {
         let mut previous_end = 0;
         let mut utf16_end = 0;
         let location = compact_location(location);
-        self.matcher
+        self.query
+            .matcher
             .try_find_iter(text.as_bytes(), |m| {
                 let (start, end) = (m.start(), m.end());
                 // Explicit byte-mode regexes may split an encoded Unicode character.
@@ -166,10 +158,9 @@ impl FileSearch<'_> {
         &self,
         path: &Path,
         reader: Reader,
-        req: &SearchRequest,
-        sink: &mut FileOutput,
+        sink: &FileOutput,
     ) -> Result<bool, Failure> {
-        let mut block_hit = |kind: &str, block: Block| -> anyhow::Result<bool> {
+        let block_hit = |kind: &str, block: Block| -> anyhow::Result<bool> {
             self.matches(kind, &block.label, &block.location, &block.text, sink)?;
             Ok(!super::stopped())
         };
@@ -178,9 +169,8 @@ impl FileSearch<'_> {
             Reader::Lines(kind) => text_stream::search(
                 path,
                 kind,
-                self.matcher,
-                &req.query,
-                req.regex,
+                &self.query.matcher,
+                self.query.window_width,
                 |location, text, start, length, block_start, block_length| {
                     let label = format!("Line {}", location["line"]);
                     Ok(self.emit(
@@ -213,8 +203,20 @@ impl FileSearch<'_> {
                     .map_err(Failure::decoder)?;
                 Ok(true)
             }
-            Reader::Buffered(reader) => {
-                let doc = reader.read(path)?;
+            Reader::Markdown => {
+                crate::documents::visit_markdown(path, |block| block_hit("markdown", block))
+                    .map_err(Failure::decoder)?;
+                Ok(true)
+            }
+            Reader::Office(kind) => {
+                office::visit_matching(path, kind, &self.query.matcher, |block| {
+                    block_hit(kind, block)
+                })
+                .map_err(Failure::decoder)?;
+                Ok(true)
+            }
+            Reader::Html => {
+                let doc = crate::html_document(path)?;
                 for block in doc.blocks {
                     if !block_hit(&doc.kind, block).map_err(Failure::decoder)? {
                         break;
@@ -229,19 +231,16 @@ impl FileSearch<'_> {
 struct FileOutput<'a> {
     slot: usize,
     events: &'a SyncSender<Event>,
-    // Replaying an interrupted file skips exactly the matches already visible in Qt.
-    skip: Progress,
 }
 
 pub(super) fn scan(
     slot: usize,
-    job: &Job,
+    path: &Path,
     root: &Path,
     request: &SearchRequest,
-    matcher: &RegexMatcher,
+    query: &SearchQuery,
     events: &SyncSender<Event>,
-) -> Report {
-    let path = &job.path;
+) -> Result<bool, Failure> {
     let stamp = revision(path);
     let current = stamp.as_ref().ok().cloned();
     let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
@@ -249,49 +248,30 @@ pub(super) fn scan(
         identity: paths::identity(path),
         display_path: &relative,
         mode: &request.mode,
-        matcher,
+        query,
         revision: current.as_deref(),
     };
-    let mut output = FileOutput {
-        slot,
-        events,
-        skip: job.published,
-    };
-    let outcome = (|| {
-        if request.filenames {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            search
-                .matches(
-                    "filename",
-                    "Filename",
-                    &json!({"index":0,"filename":true}),
-                    &name,
-                    &mut output,
-                )
-                .map_err(|e| Failure::new("read", e))?;
-        }
-        if job.names_only {
-            return Ok(false);
-        }
-        let reader = Reader::for_path(path, &request.mode);
-        if matches!(reader, Reader::Skip) {
-            return Ok(false);
-        }
-        stamp?;
-        if job.published.content != 0 && current != job.revision {
-            return Err(Failure::new("changed", "File changed while being read"));
-        }
-        if super::stopped() {
-            return Ok(false);
-        }
-        let outcome = search.search_content(path, reader, request, &mut output);
-        if revision(path).ok() != current {
-            return Err(Failure::new("changed", "File changed while being read"));
-        }
-        outcome
-    })();
-    Report {
-        outcome,
-        revision: current,
+    let output = FileOutput { slot, events };
+    if request.filenames {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        search
+            .matches(
+                "filename",
+                "Filename",
+                &json!({"index":0,"filename":true}),
+                &name,
+                &output,
+            )
+            .map_err(|e| Failure::new("read", e))?;
     }
+    let reader = Reader::for_path(path, &request.mode);
+    if matches!(reader, Reader::Skip) {
+        return Ok(false);
+    }
+    stamp?;
+    let outcome = search.search_content(path, reader, &output);
+    if revision(path).ok() != current {
+        return Err(Failure::new("changed", "File changed while being read"));
+    }
+    outcome
 }

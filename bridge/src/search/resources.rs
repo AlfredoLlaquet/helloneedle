@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Estimates control how many readers may run together. Each reader retains its
 //! format-specific guards. The first file always runs, even on a small machine.
-use crate::{BufferedReader, Reader};
+use crate::Reader;
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -28,14 +28,11 @@ impl Cost {
             // Include room for the page and the external Poppler process.
             Reader::Pdf => 256 * MIB,
             Reader::Docx => 160 * MIB,
-            Reader::Buffered(BufferedReader::Html) => {
+            Reader::Html | Reader::Markdown => {
                 4 * MIB + bytes(1024 * MIB).saturating_mul(160).min(1024 * MIB)
             }
-            Reader::Buffered(BufferedReader::Markdown) => {
-                4 * MIB + bytes(64 * MIB).saturating_mul(16).min(256 * MIB)
-            }
             // Compressed Office files can expand far beyond their size on disk.
-            Reader::Buffered(BufferedReader::Office(_)) => 256 * MIB,
+            Reader::Office(_) => 256 * MIB,
         };
         Self {
             memory,

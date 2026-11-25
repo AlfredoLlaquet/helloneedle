@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Svg)
+find_package(SQLite3 REQUIRED)
 add_library(helloneedle-desktop STATIC
     application.cpp language.cpp runtime.cpp workerclient.cpp mainwindow.cpp resultnavigation.cpp searchstatus.cpp buttonicons.cpp
-    previewpane.cpp pdfpane.cpp performancesettings.cpp credits.cpp)
+    resultstore.cpp resultbrowser.cpp searchpump.cpp previewpane.cpp pdfpane.cpp performancesettings.cpp credits.cpp)
 target_include_directories(helloneedle-desktop PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(helloneedle-desktop PUBLIC cxx_std_17)
-target_link_libraries(helloneedle-desktop PUBLIC Qt6::Widgets PRIVATE Qt6::Svg)
+target_link_libraries(helloneedle-desktop PUBLIC Qt6::Widgets PRIVATE Qt6::Svg SQLite::SQLite3)
 target_compile_definitions(helloneedle-desktop PRIVATE
     HN_VERSION="${PROJECT_VERSION}")
 if(MSVC)

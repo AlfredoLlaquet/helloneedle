@@ -3,6 +3,7 @@ use super::{paragraph_location, Output, RichText, Style, MAX_TEXT_BYTES};
 use anyhow::{anyhow, bail, Result};
 use encoding_rs::Encoding;
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Cursor, Read};
 
 #[derive(Clone, Copy)]
 struct State {
@@ -35,8 +36,8 @@ impl Default for State {
     }
 }
 
-struct Reader<'a> {
-    out: &'a mut Output,
+struct Reader<'a, 'visit> {
+    out: &'a mut Output<'visit>,
     state: State,
     parents: Vec<State>,
     fonts: HashMap<i32, u16>,
@@ -48,14 +49,52 @@ struct Reader<'a> {
     number: usize,
 }
 
-pub(super) fn extract(bytes: &[u8], out: &mut Output) -> Result<()> {
-    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-    if !bytes.starts_with(b"{\\rtf") {
+/// The lexer only buffers one disk chunk. Even ignored pictures and binary
+/// groups check cancellation between reads and never accumulate in memory.
+struct Input<R>(BufReader<R>);
+
+impl<R: Read> Input<R> {
+    fn peek(&mut self) -> Result<Option<u8>> {
+        if self.0.buffer().is_empty() {
+            crate::search::checkpoint()?;
+        }
+        Ok(self.0.fill_buf()?.first().copied())
+    }
+    fn next(&mut self) -> Result<Option<u8>> {
+        let byte = self.peek()?;
+        if byte.is_some() {
+            self.0.consume(1);
+        }
+        Ok(byte)
+    }
+    fn skip(&mut self, mut count: usize) -> Result<()> {
+        while count != 0 {
+            crate::search::checkpoint()?;
+            let size = self.0.fill_buf()?.len().min(count);
+            if size == 0 {
+                bail!("corrupt_document: truncated RTF binary data");
+            }
+            self.0.consume(size);
+            count -= size;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn extract(mut source: impl Read, out: &mut Output) -> Result<()> {
+    let mut head = Vec::new();
+    source.by_ref().take(10).read_to_end(&mut head)?;
+    let head = head.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&head);
+    if !head.starts_with(b"{\\rtf") {
         bail!("unsupported_document: missing RTF signature");
     }
-    if bytes.get(5) != Some(&b'1') || bytes.get(6).is_some_and(u8::is_ascii_digit) {
+    if head.get(5) != Some(&b'1') || head.get(6).is_some_and(u8::is_ascii_digit) {
         bail!("unsupported_document: RTF version");
     }
+    let mut input = Input(BufReader::with_capacity(
+        64 * 1024,
+        Cursor::new(head).chain(source),
+    ));
     let mut reader = Reader {
         out,
         state: State::default(),
@@ -68,10 +107,7 @@ pub(super) fn extract(bytes: &[u8], out: &mut Output) -> Result<()> {
         paragraph: RichText::default(),
         number: 0,
     };
-    let mut i = 0;
-    while i < bytes.len() {
-        let ch = bytes[i];
-        i += 1;
+    while let Some(ch) = input.next()? {
         match ch {
             b'{' => {
                 reader.flush_ansi()?;
@@ -98,73 +134,80 @@ pub(super) fn extract(bytes: &[u8], out: &mut Output) -> Result<()> {
                     .ok_or_else(|| anyhow!("corrupt_document: unmatched RTF brace"))?;
                 reader.fallback = 0;
                 if reader.parents.is_empty() {
-                    if bytes[i..]
-                        .iter()
-                        .any(|b| !b.is_ascii_whitespace() && *b != 0)
-                    {
-                        bail!("corrupt_document: unexpected data after RTF group");
+                    while let Some(trailing) = input.next()? {
+                        if !trailing.is_ascii_whitespace() && trailing != 0 {
+                            bail!("corrupt_document: unexpected data after RTF group");
+                        }
                     }
                     reader.end_paragraph()?;
                     return Ok(());
                 }
             }
             b'\\' => {
-                let c = *bytes
-                    .get(i)
+                let c = input
+                    .next()?
                     .ok_or_else(|| anyhow!("corrupt_document: truncated RTF control"))?;
-                i += 1;
                 if c == b'\'' {
-                    let hex = bytes
-                        .get(i..i + 2)
-                        .ok_or_else(|| anyhow!("corrupt_document: short RTF hex escape"))?;
-                    let hi = (hex[0] as char).to_digit(16);
-                    let lo = (hex[1] as char).to_digit(16);
-                    let (Some(hi), Some(lo)) = (hi, lo) else {
-                        bail!("corrupt_document: invalid RTF hex escape");
+                    let hex = |byte: Option<u8>| {
+                        byte.and_then(|b| (b as char).to_digit(16))
+                            .ok_or_else(|| anyhow!("corrupt_document: invalid RTF hex escape"))
                     };
+                    let hi = hex(input.next()?)?;
+                    let lo = hex(input.next()?)?;
                     reader.byte((hi * 16 + lo) as u8)?;
-                    i += 2;
                 } else if c.is_ascii_alphabetic() {
-                    let start = i - 1;
-                    while bytes.get(i).is_some_and(u8::is_ascii_alphabetic) {
-                        i += 1;
+                    // All recognized RTF keywords fit the standard's 32-letter
+                    // spelling. Consume longer unknown controls without storing them.
+                    let mut spelling = [0u8; 33];
+                    spelling[0] = c;
+                    let mut len = 1;
+                    while let Some(b) = input.peek()?.filter(u8::is_ascii_alphabetic) {
+                        input.0.consume(1);
+                        if len < spelling.len() {
+                            spelling[len] = b;
+                            len += 1;
+                        }
                     }
-                    let word = &bytes[start..i];
-                    let value_start = i;
-                    if bytes.get(i) == Some(&b'-')
-                        && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)
-                    {
-                        i += 1;
+                    let word = &spelling[..len];
+                    let negative = input.peek()? == Some(b'-');
+                    if negative {
+                        input.0.consume(1);
                     }
-                    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
-                        i += 1;
-                    }
-                    let val = if i > value_start {
-                        Some(
-                            std::str::from_utf8(&bytes[value_start..i])?
-                                .parse::<i32>()
-                                .map_err(|_| {
+                    let mut val: Option<i32> = None;
+                    while let Some(digit) = input.peek()?.filter(u8::is_ascii_digit) {
+                        input.0.consume(1);
+                        let digit = i32::from(digit - b'0');
+                        val = Some(
+                            val.unwrap_or_default()
+                                .checked_mul(10)
+                                .and_then(|n| {
+                                    if negative {
+                                        n.checked_sub(digit)
+                                    } else {
+                                        n.checked_add(digit)
+                                    }
+                                })
+                                .ok_or_else(|| {
                                     anyhow!("corrupt_document: RTF parameter out of range")
                                 })?,
-                        )
-                    } else {
-                        None
-                    };
-                    if bytes.get(i) == Some(&b' ') {
-                        i += 1;
+                        );
+                    }
+                    let literal_minus = negative && val.is_none();
+                    if !literal_minus && input.peek()? == Some(b' ') {
+                        input.0.consume(1);
                     }
                     if word == b"bin" {
                         let size = val.and_then(|n| usize::try_from(n).ok()).ok_or_else(|| {
                             anyhow!("corrupt_document: invalid RTF binary length")
                         })?;
-                        if size > bytes.len() - i {
-                            bail!("corrupt_document: truncated RTF binary data");
-                        }
-                        i += size;
+                        input.skip(size)?;
                     }
                     if !reader.skip_fallback() {
                         reader.flush_ansi()?;
                         reader.control(word, val)?;
+                    }
+                    if literal_minus {
+                        reader.byte(b'-')?;
                     }
                 } else if !reader.skip_fallback() {
                     reader.flush_ansi()?;
@@ -175,8 +218,8 @@ pub(super) fn extract(bytes: &[u8], out: &mut Output) -> Result<()> {
                         b'-' => reader.literal("\u{ad}")?,
                         b'_' => reader.literal("\u{2011}")?,
                         b'\r' | b'\n' if reader.visible() => {
-                            if c == b'\r' && bytes.get(i) == Some(&b'\n') {
-                                i += 1;
+                            if c == b'\r' && input.peek()? == Some(b'\n') {
+                                input.0.consume(1);
                             }
                             reader.end_paragraph()?;
                         }
@@ -191,7 +234,7 @@ pub(super) fn extract(bytes: &[u8], out: &mut Output) -> Result<()> {
     bail!("corrupt_document: unclosed RTF group")
 }
 
-impl Reader<'_> {
+impl Reader<'_, '_> {
     fn visible(&self) -> bool {
         !self.state.ignored && !self.state.hidden
     }
@@ -312,6 +355,10 @@ impl Reader<'_> {
                         charset(n)
                     };
                     if let Some(page) = page {
+                        if !self.fonts.contains_key(&font) && self.fonts.len() > MAX_TEXT_BYTES / 32
+                        {
+                            bail!("resource_limit: RTF font table");
+                        }
                         self.fonts.insert(font, page);
                     }
                 }
@@ -338,7 +385,6 @@ impl Reader<'_> {
             b"uc" => {
                 self.state.fallback_length = arg
                     .and_then(|n| usize::try_from(n).ok())
-                    .filter(|n| *n <= 255)
                     .ok_or_else(|| anyhow!("corrupt_document: invalid RTF fallback length"))?
             }
             b"u" => self.unicode(
@@ -437,3 +483,33 @@ fn decode(bytes: &[u8], page: u16) -> Result<std::borrow::Cow<'_, str>> {
 // Upper halves of the original IBM PC and Western European DOS code pages.
 const CP437: &str = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
 const CP850: &str = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´\u{ad}±‗¾¶§÷¸°¨·¹³²■ ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn long_unicode_fallback_is_counted_without_allocating_it() {
+        let mut out = Output::default();
+        let doc = format!(r"{{\rtf1\uc300\u241{} visible}}", "x".repeat(300));
+        extract(doc.as_bytes(), &mut out).unwrap();
+        assert_eq!(out.blocks[0].text, "ñ visible");
+        assert!(extract(br"{\rtf1\uc-1 text}".as_slice(), &mut out).is_err());
+    }
+    #[test]
+    fn streams_large_ignored_binary_group_to_a_late_paragraph() {
+        let count = 66 * 1024 * 1024;
+        let header = format!(r"{{\rtf1 first\par {{\pict\bin{count} ");
+        let data = Cursor::new(header)
+            .chain(std::io::repeat(b'{').take(count))
+            .chain(Cursor::new(b"}target}"));
+        let mut out = Output::default();
+        extract(data, &mut out).unwrap();
+        assert_eq!(
+            out.blocks
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "target"]
+        );
+    }
+}

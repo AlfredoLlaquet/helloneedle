@@ -33,6 +33,9 @@ pub(super) fn windows_controls(bytes: &[u8]) -> bool {
 /// must also be verified by the text reader before it is accepted as a hyphen.
 pub(super) fn binary_controls(bytes: &[u8], word_export: bool) -> bool {
     bytes.iter().any(|&b| {
-        b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0c) && !(word_export && b == 0x1e)
+        // ESC and BEL are validated as complete ANSI sequences after decoding.
+        b < 0x20
+            && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0c | 0x1b | 7)
+            && !(word_export && b == 0x1e)
     })
 }

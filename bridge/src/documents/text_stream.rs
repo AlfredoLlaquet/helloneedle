@@ -6,7 +6,8 @@ mod source;
 mod tests;
 mod word_hyphens;
 
-use self::source::{byte_len, can_seek, utf16_left, Charset, NotText, BUFFER};
+pub(super) use self::source::NotText;
+use self::source::{byte_len, can_seek, utf16_left, Charset, BUFFER};
 use crate::Block;
 use anyhow::{anyhow, ensure, Result};
 use encoding_rs::Encoding;
@@ -25,6 +26,7 @@ struct Position {
     byte: u64,
     line: usize,
     column: usize, // UTF-16 units from the beginning of this physical line.
+    styled: bool,  // ANSI controls were removed from this line's displayed text.
 }
 
 fn units(s: &str) -> usize {
@@ -71,7 +73,7 @@ fn location(
 ) -> Value {
     let mut loc = json!({"index":at.line,"line":at.line + 1});
     if can_seek(charset) {
-        let anchor = if at.byte.saturating_sub(preceding.byte) <= 64 * 1024 {
+        let anchor = if at.styled || at.byte.saturating_sub(preceding.byte) <= 64 * 1024 {
             preceding
         } else {
             let prefix = &text[left(text, start, PREVIEW_UNITS)..start];
@@ -80,6 +82,7 @@ fn location(
                 byte: at.byte - byte_len(charset, prefix, n),
                 line: at.line,
                 column: at.column - n,
+                styled: false,
             }
         };
         loc["sourceByte"] = json!(anchor.byte);
@@ -145,12 +148,38 @@ where
     }
 }
 
+/// A finite, nonempty expression can be decided with lookahead to the end of the
+/// match plus the next Unicode scalar. Retained left context and a nonzero restart
+/// position preserve word/line assertions when a window no longer starts the line.
+/// Keep nullable expressions on the whole-line path for empty-match iteration.
+pub(crate) fn window_width(query: &str, regex: bool, case_sensitive: bool) -> Option<usize> {
+    let width = if regex {
+        let hir = regex_syntax::ParserBuilder::new()
+            .utf8(false)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .parse(query)
+            .ok()?;
+        let properties = hir.properties();
+        if properties.minimum_len()? == 0 {
+            return None;
+        }
+        properties.maximum_len()?
+    } else if case_sensitive {
+        query.len()
+    } else {
+        // Unicode simple case folding preserves scalar count, not byte length.
+        query.len().saturating_mul(4)
+    };
+    // A giant bounded repetition can still require a whole-line working budget.
+    (width <= REGEX_LINE_BYTES / 2).then(|| (width + 4).max(4 * 240))
+}
+
 pub(crate) fn search(
     path: &Path,
     kind: &str,
     matcher: &RegexMatcher,
-    query: &str,
-    regex: bool,
+    width: Option<usize>,
     hit: impl FnMut(&Value, &str, usize, usize, usize, usize) -> Result<bool>,
 ) -> Result<bool> {
     let mut window = Window { matcher, hit };
@@ -158,73 +187,63 @@ pub(crate) fn search(
     let mut pending = String::new();
     let mut origin = Position::default();
     let mut from = 0;
-    // Unicode simple case folding preserves scalar count but may change UTF-8 byte lengths.
-    // Also reserve enough bytes on the right for the displayed excerpt.
-    let overlap = 4 * query.len().max(240);
-    let whole_line = regex
-        && query.contains([
-            '\\', '.', '^', '$', '|', '*', '+', '?', '(', ')', '[', ']', '{', '}',
-        ]);
-    let result = source::walk(
-        path,
-        kind == "html",
-        None,
-        |part, pos, charset, ends_line| {
-            if recent.back().is_none_or(|last| last.line != pos.line) {
-                if recent.len() == CONTEXT_LINES + 1 {
-                    recent.pop_front();
-                }
-                recent.push_back(pos);
+    let result = source::walk(path, kind, None, |part, pos, charset, ends_line| {
+        if recent.back().is_none_or(|last| last.line != pos.line) {
+            if recent.len() == CONTEXT_LINES + 1 {
+                recent.pop_front();
             }
-            let preceding = recent[0];
-            if pending.is_empty() {
-                origin = pos;
-                if ends_line {
-                    return Ok(window.matches(part, pos, charset, preceding, 0, None)?.0);
-                }
-            }
-            if whole_line {
-                let needed = pending.len().saturating_add(part.len());
-                ensure!(needed <= REGEX_LINE_BYTES, "resource_limit: regular expression needs more than 256 MiB for one source line");
-                if needed > pending.capacity() {
-                    let capacity = needed
-                        .max(pending.capacity().saturating_mul(2))
-                        .min(REGEX_LINE_BYTES);
-                    pending
-                        .try_reserve_exact(capacity - pending.len())
-                        .map_err(|_| {
-                            anyhow!(
-                                "resource_limit: insufficient memory for regular-expression line"
-                            )
-                        })?;
-                }
-            }
-            pending.push_str(part);
+            recent.push_back(pos);
+        }
+        let preceding = recent[0];
+        if pending.is_empty() {
+            origin = pos;
             if ends_line {
-                let (more, _) = window.matches(&pending, origin, charset, preceding, from, None)?;
-                pending.clear();
-                from = 0;
-                return Ok(more);
+                return Ok(window.matches(part, pos, charset, preceding, 0, None)?.0);
             }
-            if !whole_line && pending.len() >= overlap + BUFFER.max(overlap) {
-                let mut safe = pending.len() - overlap;
-                while !pending.is_char_boundary(safe) {
-                    safe -= 1;
-                }
-                let (more, resume) =
-                    window.matches(&pending, origin, charset, preceding, from, Some(safe))?;
-                if !more {
-                    return Ok(false);
-                }
-                // Retain sufficient left context for a selected preview as well as a search excerpt.
-                let cut = left(&pending, resume, PREVIEW_UNITS);
-                origin = origin.after(&pending[..cut], charset);
-                pending.drain(..cut);
-                from = resume - cut;
+        }
+        origin.styled |= pos.styled;
+        if width.is_none() {
+            let needed = pending.len().saturating_add(part.len());
+            ensure!(
+                needed <= REGEX_LINE_BYTES,
+                "resource_limit: regular expression needs more than 256 MiB for one source line"
+            );
+            if needed > pending.capacity() {
+                let capacity = needed
+                    .max(pending.capacity().saturating_mul(2))
+                    .min(REGEX_LINE_BYTES);
+                pending
+                    .try_reserve_exact(capacity - pending.len())
+                    .map_err(|_| {
+                        anyhow!("resource_limit: insufficient memory for regular-expression line")
+                    })?;
             }
-            Ok(true)
-        },
-    );
+        }
+        pending.push_str(part);
+        if ends_line {
+            let (more, _) = window.matches(&pending, origin, charset, preceding, from, None)?;
+            pending.clear();
+            from = 0;
+            return Ok(more);
+        }
+        if let Some(overlap) = width.filter(|&n| pending.len() >= n + BUFFER.max(n)) {
+            let mut safe = pending.len() - overlap;
+            while !pending.is_char_boundary(safe) {
+                safe -= 1;
+            }
+            let (more, resume) =
+                window.matches(&pending, origin, charset, preceding, from, Some(safe))?;
+            if !more {
+                return Ok(false);
+            }
+            // Retain sufficient left context for a selected preview as well as a search excerpt.
+            let cut = left(&pending, resume, PREVIEW_UNITS);
+            origin = origin.after(&pending[..cut], charset);
+            pending.drain(..cut);
+            from = resume - cut;
+        }
+        Ok(true)
+    });
     match result {
         Err(e)
             if e.is::<NotText>()
@@ -269,7 +288,15 @@ fn bookmark(loc: &Value, target: usize) -> Result<Option<(Position, Charset)>> {
         can_seek(encoding),
         "location: source encoding is not seekable"
     );
-    Ok(Some((Position { byte, line, column }, encoding)))
+    Ok(Some((
+        Position {
+            byte,
+            line,
+            column,
+            styled: false,
+        },
+        encoding,
+    )))
 }
 
 pub(crate) fn preview(
@@ -277,6 +304,7 @@ pub(crate) fn preview(
     kind: &str,
     location: &Value,
     block_start: usize,
+    block_length: usize,
 ) -> Result<(Vec<Block>, usize, Option<usize>)> {
     let target = match location.get("index") {
         None => 0,
@@ -290,7 +318,7 @@ pub(crate) fn preview(
     let mut text = String::new();
     let mut offset = None;
     let mut known_lines = Some(0);
-    source::walk(path, kind == "html", seek, |part, pos, _, ends_line| {
+    source::walk(path, kind, seek, |part, pos, _, ends_line| {
         if pos.line < first {
             return Ok(true);
         }
@@ -300,7 +328,13 @@ pub(crate) fn preview(
         }
         let focus = if pos.line == target { block_start } else { 0 };
         let lo = focus.saturating_sub(PREVIEW_UNITS);
-        let hi = focus.saturating_add(2 * PREVIEW_UNITS);
+        let hi = if pos.line == target {
+            focus
+                .saturating_add(block_length.max(PREVIEW_UNITS))
+                .saturating_add(PREVIEW_UNITS)
+        } else {
+            2 * PREVIEW_UNITS
+        };
         let n = units(part);
         let end_column = pos.column + n;
         if pos.column < hi && lo <= end_column {
@@ -332,4 +366,59 @@ pub(crate) fn preview(
     let selected =
         selected.ok_or_else(|| anyhow!("location: source line is outside the document"))?;
     Ok((blocks, selected, known_lines))
+}
+
+/// Re-read the same projected text and send the original match in bounded pieces.
+pub(crate) fn copy_match(
+    path: &Path,
+    kind: &str,
+    location: &Value,
+    start: usize,
+    length: usize,
+    mut emit: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    let line =
+        usize_value(&location["index"]).ok_or_else(|| anyhow!("location: invalid source line"))?;
+    let end = start
+        .checked_add(length)
+        .ok_or_else(|| anyhow!("location: invalid match range"))?;
+    let seek = bookmark(location, line)?;
+    let mut copied = 0;
+    let mut reached = false;
+    source::walk(path, kind, seek, |part, pos, _, ends_line| {
+        if pos.line != line {
+            return Ok(pos.line < line);
+        }
+        let part_end = pos.column + units(part);
+        if start <= part_end && end >= pos.column {
+            let a = start.saturating_sub(pos.column);
+            let b = end.min(part_end) - pos.column;
+            let left = utf16_left(part, a);
+            let right = utf16_left(part, b);
+            ensure!(
+                units(&part[..left]) == a && units(&part[..right]) == b,
+                "location: match splits a Unicode character"
+            );
+            if left < right {
+                emit(&part[left..right])?;
+                copied += b - a;
+            }
+            reached = true;
+        }
+        Ok(!ends_line && part_end < end)
+    })?;
+    ensure!(
+        reached && copied == length,
+        "location: match extends outside the source line"
+    );
+    Ok(())
+}
+
+pub(super) fn markdown_source(
+    path: &Path,
+    mut visit: impl FnMut(&str, bool) -> Result<bool>,
+) -> Result<()> {
+    source::walk(path, "markdown_input", None, |part, _, _, end| {
+        visit(part, end)
+    })
 }

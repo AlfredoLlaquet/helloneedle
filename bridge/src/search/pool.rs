@@ -5,7 +5,7 @@
 use super::{
     file,
     resources::{Cost, Resources},
-    FileCancellation, CANCEL, MAX_RESULTS,
+    FileCancellation, SearchQuery, CANCEL,
 };
 use crate::{
     paths,
@@ -13,7 +13,6 @@ use crate::{
     Failure,
 };
 use glob::{MatchOptions, Pattern};
-use grep_regex::RegexMatcher;
 use ignore::WalkBuilder;
 use serde::Serialize;
 use serde_json::json;
@@ -23,7 +22,6 @@ use std::{
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
         Arc,
     },
@@ -31,24 +29,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Copy, Default)]
-pub(super) struct Progress {
-    pub names: usize,
-    pub content: usize,
-}
-
 pub(super) struct Job {
-    pub path: PathBuf,
+    path: PathBuf,
     cost: Cost,
-    pub published: Progress,
-    pub revision: Option<String>,
-    pub names_only: bool,
-    counted: bool,
-}
-
-pub(super) struct Report {
-    pub outcome: Result<bool, Failure>,
-    pub revision: Option<String>,
 }
 
 pub(super) enum Event {
@@ -63,8 +46,7 @@ pub(super) enum Event {
     Finished {
         slot: usize,
         job: Job,
-        report: Report,
-        interrupted: bool,
+        outcome: Result<bool, Failure>,
     },
 }
 
@@ -74,7 +56,7 @@ fn discover(
     pattern: Option<Pattern>,
     credits: Receiver<()>,
     events: &SyncSender<Event>,
-    stopping: &AtomicBool,
+    cancellation: &FileCancellation,
 ) {
     let walker = WalkBuilder::new(folder)
         .git_ignore(!req.ignored)
@@ -84,7 +66,7 @@ fn discover(
         .hidden(!req.hidden)
         .require_git(false)
         .follow_links(false)
-        .sort_by_file_path(|a, b| a.cmp(b))
+        .max_depth(req.exclude_subdirectories.then_some(1))
         .build();
     let options = MatchOptions {
         case_sensitive: false,
@@ -92,7 +74,7 @@ fn discover(
         require_literal_leading_dot: false,
     };
     for entry in walker {
-        if stopping.load(Ordering::Relaxed) {
+        if cancellation.stopped() {
             return;
         }
         let entry = match entry {
@@ -123,10 +105,6 @@ fn discover(
         let job = Job {
             path: entry.into_path(),
             cost,
-            published: Progress::default(),
-            revision: None,
-            names_only: false,
-            counted: false,
         };
         if events.send(Event::Path(job)).is_err() {
             return;
@@ -137,8 +115,7 @@ fn discover(
 struct Slot {
     jobs: SyncSender<Job>,
     busy: bool,
-    published: Progress,
-    overflow: Progress,
+    content_hits: u64,
 }
 
 fn start_worker<'scope, 'env: 'scope>(
@@ -146,43 +123,28 @@ fn start_worker<'scope, 'env: 'scope>(
     slot: usize,
     folder: &'env Path,
     req: &'env SearchRequest,
-    matcher: &RegexMatcher,
+    query: &SearchQuery,
     events: SyncSender<Event>,
-    stop: Arc<AtomicBool>,
+    cancellation: Arc<FileCancellation>,
 ) -> io::Result<Slot> {
     let (jobs, input) = mpsc::sync_channel::<Job>(1);
     // A separate matcher cache per worker avoids contention inside regex searches.
-    let matcher = matcher.clone();
+    let query = query.clone();
     thread::Builder::new()
         .name(format!("file-search-{slot}"))
         .spawn_scoped(scope, move || {
+            CANCEL.with_borrow_mut(|flag| *flag = Some(cancellation));
             for job in input {
-                let token = Arc::new(FileCancellation {
-                    requested: Arc::clone(&stop),
-                    observed: AtomicBool::new(false),
-                });
-                CANCEL.with_borrow_mut(|t| *t = Some(Arc::clone(&token)));
-                let report = catch_unwind(AssertUnwindSafe(|| {
-                    file::scan(slot, &job, folder, req, &matcher, &events)
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    file::scan(slot, &job.path, folder, req, &query, &events)
                 }))
-                .unwrap_or_else(|_| Report {
-                    outcome: Err(Failure::new(
+                .unwrap_or_else(|_| {
+                    Err(Failure::new(
                         "format",
                         "Document reader stopped unexpectedly",
-                    )),
-                    revision: None,
+                    ))
                 });
-                CANCEL.with_borrow_mut(|t| *t = None);
-                let interrupted = token.observed.load(Ordering::Relaxed);
-                if events
-                    .send(Event::Finished {
-                        slot,
-                        job,
-                        report,
-                        interrupted,
-                    })
-                    .is_err()
-                {
+                if events.send(Event::Finished { slot, job, outcome }).is_err() {
                     break;
                 }
             }
@@ -190,8 +152,7 @@ fn start_worker<'scope, 'env: 'scope>(
     Ok(Slot {
         jobs,
         busy: false,
-        published: Progress::default(),
-        overflow: Progress::default(),
+        content_hits: 0,
     })
 }
 
@@ -214,89 +175,45 @@ struct Discard {
 struct Coordinator<'a, W> {
     sink: &'a mut Emitter<W>,
     pending: VecDeque<Job>,
-    retry: Vec<Job>,
     slots: Vec<Slot>,
     resources: Resources,
     last_progress: Instant,
-    paused: bool,
-    valid_overflow: bool,
 }
 
 impl<W: Write> Coordinator<'_, W> {
-    fn hit(
-        &mut self,
-        slot: usize,
-        filename: bool,
-        payload: Vec<u8>,
-        stop: &AtomicBool,
-    ) -> io::Result<()> {
-        let task = &mut self.slots[slot];
-        // Hold admission as soon as an extra occurrence exists. Final revision
-        // checks on active files can still free slots or invalidate that extra hit.
-        if self.paused || self.sink.count == MAX_RESULTS {
-            self.paused = true;
-            stop.store(true, Ordering::Relaxed);
-            if filename {
-                task.overflow.names += 1;
-            } else {
-                task.overflow.content += 1;
-            }
-        } else {
-            self.sink.send_serialized(&payload)?;
-            self.sink.count += 1;
-            if filename {
-                task.published.names += 1;
-            } else {
-                task.published.content += 1;
-            }
+    fn hit(&mut self, slot: usize, filename: bool, payload: Vec<u8>) -> io::Result<()> {
+        self.sink.send_serialized(&payload)?;
+        if self.sink.count == 0 {
+            self.sink.flush()?;
+        }
+        self.sink.count += 1;
+        if !filename {
+            self.slots[slot].content_hits += 1;
         }
         Ok(())
     }
 
-    fn finish(
-        &mut self,
-        slot: usize,
-        mut job: Job,
-        report: Report,
-        interrupted: bool,
-    ) -> io::Result<()> {
+    fn finish(&mut self, slot: usize, job: Job, outcome: Result<bool, Failure>) -> io::Result<()> {
         let task = &mut self.slots[slot];
         task.busy = false;
         self.resources.finish(job.cost);
-        let mut published = task.published;
-        // A reader interrupted at a chunk boundary can report an internal read
-        // error. A real decoder/revision error still calls for a per-file rollback.
-        let interrupted = interrupted
-            && match &report.outcome {
-                Ok(_) => true,
-                Err(e) => e.message.contains("search interrupted"),
-            };
-        let content_valid = interrupted || matches!(report.outcome, Ok(true));
-        if !content_valid && published.content != 0 {
-            self.sink.send(&Discard {
-                r#type: "discard",
-                identity: paths::identity(&job.path),
-            })?;
-            self.sink.count -= published.content;
-            published.content = 0;
-        }
-        if !interrupted {
-            if let Err(error) = report.outcome {
+        if matches!(outcome, Ok(true)) {
+            self.sink.documents_scanned += 1;
+        } else {
+            // A late decode failure, binary marker or changed file invalidates
+            // this file's content. Its filename and other files' hits survive.
+            if task.content_hits != 0 {
+                self.sink.send(&Discard {
+                    r#type: "discard",
+                    identity: paths::identity(&job.path),
+                })?;
+                self.sink.count -= task.content_hits;
+            }
+            if let Err(error) = outcome {
                 self.sink.error(error, Some(&job.path))?;
             }
         }
-        let extra = task.overflow.names != 0 || (content_valid && task.overflow.content != 0);
-        self.valid_overflow |= extra;
-        if interrupted || extra {
-            // Only in-flight jobs can require replay, and only if another file
-            // invalidates visible matches. Keep paths, revisions and counts.
-            job.names_only |= !content_valid;
-            job.published = published;
-            job.revision = report.revision;
-            self.retry.push(job);
-        } else if content_valid {
-            self.sink.documents_scanned += 1;
-        }
+        task.content_hits = 0;
         Ok(())
     }
 }
@@ -304,7 +221,7 @@ impl<W: Write> Coordinator<'_, W> {
 pub(super) fn run<W: Write>(
     req: &SearchRequest,
     folder: &Path,
-    matcher: RegexMatcher,
+    query: SearchQuery,
     pattern: Option<Pattern>,
     sink: &mut Emitter<W>,
 ) -> io::Result<()> {
@@ -313,15 +230,11 @@ pub(super) fn run<W: Write>(
     let mut coordinator = Coordinator {
         sink,
         pending: VecDeque::new(),
-        retry: Vec::new(),
         resources,
         slots: Vec::new(),
         last_progress: Instant::now(),
-        paused: false,
-        valid_overflow: false,
     };
-    let cancel = Arc::new(AtomicBool::new(false));
-    let stop_walker = AtomicBool::new(false);
+    let cancellation = Arc::new(FileCancellation::default());
     thread::scope(|scope| {
         let (events, input) = mpsc::sync_channel((coordinator.resources.workers * 2).clamp(8, 128));
         let (refill, credits) = mpsc::sync_channel(depth);
@@ -329,12 +242,19 @@ pub(super) fn run<W: Write>(
             refill.try_send(()).unwrap();
         }
         let walk_events = events.clone();
-        let stop_walk = &stop_walker;
+        let walk_cancellation = Arc::clone(&cancellation);
         thread::Builder::new()
             .name("search-folders".into())
             .spawn_scoped(scope, move || {
                 let walked = catch_unwind(AssertUnwindSafe(|| {
-                    discover(folder, req, pattern, credits, &walk_events, stop_walk)
+                    discover(
+                        folder,
+                        req,
+                        pattern,
+                        credits,
+                        &walk_events,
+                        &walk_cancellation,
+                    )
                 }));
                 if walked.is_err() {
                     let _ = walk_events.send(Event::WalkError(
@@ -346,73 +266,64 @@ pub(super) fn run<W: Write>(
         let mut walked = false;
         let result = (|| {
             loop {
-                if coordinator.paused && coordinator.resources.active() == 0 {
-                    if coordinator.sink.count == MAX_RESULTS && coordinator.valid_overflow {
-                        coordinator.sink.truncated = true;
-                        return Ok(());
+                coordinator.resources.refresh();
+                while coordinator.resources.active() < coordinator.resources.workers {
+                    let Some(index) = coordinator
+                        .pending
+                        .iter()
+                        .position(|j| coordinator.resources.allows(j.cost))
+                    else {
+                        break;
+                    };
+                    let job = coordinator.pending.remove(index).unwrap();
+                    examined(coordinator.sink, &mut coordinator.last_progress)?;
+                    let _ = refill.try_send(());
+                    if job.cost.skip && !req.filenames {
+                        continue;
                     }
-                    coordinator.paused = false;
-                    coordinator.valid_overflow = false;
-                    cancel.store(false, Ordering::Relaxed);
-                    for job in coordinator.retry.drain(..).rev() {
-                        coordinator.pending.push_front(job);
-                    }
-                }
-                if !coordinator.paused {
-                    coordinator.resources.refresh();
-                    while coordinator.resources.active() < coordinator.resources.workers {
-                        let Some(index) = coordinator
-                            .pending
-                            .iter()
-                            .position(|j| coordinator.resources.allows(j.cost))
-                        else {
-                            break;
-                        };
-                        let mut job = coordinator.pending.remove(index).unwrap();
-                        if !job.counted {
-                            // Never count mere lookahead, and never count a replay twice.
-                            examined(coordinator.sink, &mut coordinator.last_progress)?;
-                            job.counted = true;
-                            let _ = refill.try_send(());
+                    let slot = match coordinator.slots.iter().position(|s| !s.busy) {
+                        Some(slot) => slot,
+                        None => {
+                            let id = coordinator.slots.len();
+                            let worker = start_worker(
+                                scope,
+                                id,
+                                folder,
+                                req,
+                                &query,
+                                events.clone(),
+                                Arc::clone(&cancellation),
+                            )?;
+                            coordinator.slots.push(worker);
+                            id
                         }
-                        if job.cost.skip && !req.filenames {
-                            continue;
-                        }
-                        let slot = match coordinator.slots.iter().position(|s| !s.busy) {
-                            Some(slot) => slot,
-                            None => {
-                                let id = coordinator.slots.len();
-                                let worker = start_worker(
-                                    scope,
-                                    id,
-                                    folder,
-                                    req,
-                                    &matcher,
-                                    events.clone(),
-                                    Arc::clone(&cancel),
-                                )?;
-                                coordinator.slots.push(worker);
-                                id
-                            }
-                        };
-                        let worker = &mut coordinator.slots[slot];
-                        worker.busy = true;
-                        worker.published = job.published;
-                        worker.overflow = Progress::default();
-                        coordinator.resources.start(job.cost);
-                        worker
-                            .jobs
-                            .send(job)
-                            .map_err(|_| io::Error::other("file search thread stopped"))?;
-                    }
+                    };
+                    let worker = &mut coordinator.slots[slot];
+                    worker.busy = true;
+                    coordinator.resources.start(job.cost);
+                    worker
+                        .jobs
+                        .send(job)
+                        .map_err(|_| io::Error::other("file search thread stopped"))?;
                 }
                 if walked && coordinator.resources.active() == 0 && coordinator.pending.is_empty() {
                     return Ok(());
                 }
-                match input
-                    .recv()
-                    .map_err(|_| io::Error::other("file search stopped"))?
-                {
+                // Flush when caught up, including a lone provisional match from
+                // a reader that subsequently waits for more document input.
+                let event = match input.try_recv() {
+                    Ok(event) => event,
+                    Err(mpsc::TryRecvError::Empty) => {
+                        coordinator.sink.flush()?;
+                        input
+                            .recv()
+                            .map_err(|_| io::Error::other("file search stopped"))?
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return Err(io::Error::other("file search stopped"))
+                    }
+                };
+                match event {
                     Event::Path(job) => coordinator.pending.push_back(job),
                     Event::WalkError(error) => {
                         coordinator.sink.error(Failure::new("walk", error), None)?
@@ -422,18 +333,14 @@ pub(super) fn run<W: Write>(
                         slot,
                         filename,
                         payload,
-                    } => coordinator.hit(slot, filename, payload, &cancel)?,
-                    Event::Finished {
-                        slot,
-                        job,
-                        report,
-                        interrupted,
-                    } => coordinator.finish(slot, job, report, interrupted)?,
+                    } => coordinator.hit(slot, filename, payload)?,
+                    Event::Finished { slot, job, outcome } => {
+                        coordinator.finish(slot, job, outcome)?
+                    }
                 }
             }
         })();
-        cancel.store(true, Ordering::Relaxed);
-        stop_walker.store(true, Ordering::Relaxed);
+        cancellation.stop();
         coordinator.slots.clear();
         drop(refill);
         drop(input);

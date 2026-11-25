@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read the Document representation of HTML without retaining embedded resources.
 use super::{encoding, markup};
-use crate::Document;
+use crate::{Block, Document};
 use anyhow::Result;
 use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_8, WINDOWS_1252};
 use html5ever::tendril::StrTendril;
@@ -15,7 +15,7 @@ use scraper::{Html, HtmlTreeSink};
 use std::cell::Cell;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 
-const DOCUMENT_MEMORY: usize = 1024 * 1024 * 1024;
+pub(super) const DOCUMENT_MEMORY: usize = 1024 * 1024 * 1024;
 const LIMIT_MESSAGE: &str = "too_large: HTML exceeds the document memory budget";
 const ENCODING_ERROR: &str = "unsupported_encoding: invalid HTML text encoding";
 const NODE_RESERVATION: usize = 512;
@@ -56,6 +56,10 @@ impl Budget {
         self.charge(bytes);
         self.check()?;
         Ok(())
+    }
+
+    pub(super) fn release(&self, bytes: usize) {
+        self.remaining.set(self.remaining.get() + bytes);
     }
 
     fn check(&self) -> io::Result<()> {
@@ -169,6 +173,42 @@ fn read_as(
     limit: usize,
     malformed: &Cell<bool>,
 ) -> Result<Document> {
+    let mut blocks = Vec::new();
+    visit_as(input, charset, limit, malformed, false, &mut |block| {
+        blocks.push(block);
+        Ok(true)
+    })?;
+    Ok(Document {
+        kind: "html".into(),
+        blocks,
+    })
+}
+
+/// Generated CommonMark HTML is already decoded. Preserve its HTML5 tree semantics,
+/// including raw HTML, and send completed projected blocks to the caller.
+pub(super) fn rendered(
+    input: &[u8],
+    available: usize,
+    visit: &mut dyn FnMut(Block) -> Result<bool>,
+) -> Result<()> {
+    visit_as(
+        input,
+        HtmlCharset::Selected(UTF_8),
+        available,
+        &Cell::new(false),
+        true,
+        visit,
+    )
+}
+
+fn visit_as(
+    input: impl Read,
+    charset: HtmlCharset,
+    limit: usize,
+    malformed: &Cell<bool>,
+    stream_blocks: bool,
+    visit: &mut dyn FnMut(Block) -> Result<bool>,
+) -> Result<()> {
     let budget = Budget::new(limit);
     let input = IoReader::new(Decoded::new(input, charset, &budget, malformed));
     let tree = TreeBuilder::new(HtmlTreeSink::new(Html::new_document()), Default::default());
@@ -319,11 +359,7 @@ fn read_as(
     let _ = tree.process_token(TreeToken::EOFToken, 1);
     tree.end();
     let doc = tree.sink.finish();
-    let blocks = markup::project_tree(&doc, Some(&budget))?;
-    Ok(Document {
-        kind: "html".into(),
-        blocks,
-    })
+    markup::project_tree(&doc, Some(&budget), stream_blocks, visit)
 }
 
 fn utf8(bytes: &[u8]) -> Result<&str> {

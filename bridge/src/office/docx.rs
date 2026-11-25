@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Visit the Word main story in order, keeping only the open elements and current paragraph.
-mod xml;
 
+use super::xml_encoding::Input as XmlInput;
 use super::{
     ooxml::{main_part, named_heading, word_headings},
     package::Package,
-    paragraph_location, RichText, Style, MAX_COLS,
+    paragraph_location, RichText, Style,
 };
 use crate::{Block, Document, MAX_TEXT_BYTES};
 use anyhow::{anyhow, bail, ensure, Result};
@@ -22,7 +22,6 @@ use std::{
     ops::Range,
     path::Path,
 };
-use xml::XmlInput;
 
 type Cell = (usize, usize, usize);
 
@@ -75,6 +74,7 @@ pub(crate) fn preview_docx(
     path: &Path,
     selected: usize,
     focus: usize,
+    length: usize,
 ) -> Result<(Vec<Block>, usize, Option<usize>)> {
     let range = selected.saturating_sub(NEIGHBORS)..selected.saturating_add(NEIGHBORS + 1);
     let mut context = VecDeque::new();
@@ -89,7 +89,7 @@ pub(crate) fn preview_docx(
             return Ok(true);
         }
         if index == selected && block_bytes(&block) > PREVIEW_BYTES {
-            crate::protocol::clip_paragraph(&mut block, focus);
+            crate::protocol::clip_paragraph(&mut block, focus, length);
         }
         let size = block_bytes(&block);
         if index <= selected {
@@ -370,11 +370,8 @@ impl Word {
             }
             (Kind::Row { .. }, b"trPr") => Kind::RowProps,
             (Kind::RowProps, b"gridBefore") => {
-                if let Some(skip) = val(xml, tag)?
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .filter(|n| *n < MAX_COLS)
-                {
-                    self.set_next_column(1 + skip);
+                if let Some(skip) = val(xml, tag)? {
+                    self.set_next_column(grid_column(1, &skip)?);
                 }
                 Kind::Ignore
             }
@@ -387,16 +384,20 @@ impl Word {
                 b"tc",
             ) => {
                 cell = Some((table, row, next_column));
-                self.set_next_column(next_column + 1);
+                self.set_next_column(
+                    next_column
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow!("corrupt_document: Word table column overflow"))?,
+                );
                 Kind::Cell
             }
             (Kind::Cell, b"tcPr") => Kind::CellProps,
             (Kind::CellProps, b"gridSpan") => {
-                if let Some(span) = val(xml, tag)?
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .filter(|n| (1..=MAX_COLS).contains(n))
-                {
-                    self.set_next_column(cell.unwrap().2 + span);
+                if let Some(span) = val(xml, tag)? {
+                    let column = cell.unwrap().2;
+                    let next = grid_column(column, &span)?;
+                    ensure!(next > column, "corrupt_document: zero Word table cell span");
+                    self.set_next_column(next);
                 }
                 Kind::Ignore
             }
@@ -516,4 +517,13 @@ fn val<B: BufRead>(xml: &NsReader<B>, tag: &BytesStart<'_>) -> Result<Option<Str
 
 fn xml_error(error: impl std::fmt::Display) -> anyhow::Error {
     anyhow!("corrupt_document: invalid Word XML: {error}")
+}
+
+fn grid_column(base: usize, delta: &str) -> Result<usize> {
+    let delta: usize = delta
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("corrupt_document: invalid Word table grid coordinate"))?;
+    base.checked_add(delta)
+        .ok_or_else(|| anyhow!("corrupt_document: Word table column overflow"))
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "resultnavigation.h"
+#include "resultbrowser.h"
 #include "buttonicons.h"
 #include "language.h"
 #include <QApplication>
@@ -7,7 +8,6 @@
 #include <QKeyEvent>
 #include <QShortcut>
 #include <QToolButton>
-#include <QTreeWidget>
 
 namespace hn {
 namespace {
@@ -40,7 +40,7 @@ const Command commands[] = {
 };
 }
 
-ResultNavigation::ResultNavigation(QTreeWidget *results, QWidget *parent) : QWidget(parent), tree(results)
+ResultNavigation::ResultNavigation(ResultBrowser *results, QWidget *parent) : QWidget(parent), browser(results)
 {
     setObjectName("resultNavigation");
     auto *layout = new QHBoxLayout(this);
@@ -56,7 +56,7 @@ ResultNavigation::ResultNavigation(QTreeWidget *results, QWidget *parent) : QWid
         shortcut->setContext(Qt::WindowShortcut);
         connect(shortcut, &QShortcut::activated, button, &QToolButton::click);
         connect(button, &QToolButton::clicked, this, [this, &command] {
-            navigate(command.direction, command.unit == Unit::Document);
+            browser->navigate(command.direction, command.unit == Unit::Document);
         });
         layout->addWidget(button);
         buttons.append(button);
@@ -98,34 +98,4 @@ bool ResultNavigation::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
-void ResultNavigation::selectMatch(QTreeWidgetItem *item)
-{
-    if (item)
-        item->parent()->setExpanded(true);
-    tree->setCurrentItem(item, 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-    if (item)
-        tree->scrollToItem(item);
-}
-
-void ResultNavigation::navigate(int direction, bool byDocument)
-{
-    const int documents = tree->topLevelItemCount();
-    if (!documents) return;
-    auto *current = tree->currentItem();
-    auto *group = current && current->parent() ? current->parent() : current;
-    if (current && !byDocument) {
-        // From a file heading, its first occurrence is the next row in tree order.
-        const int row = current->parent() ? tree->indexFromItem(current).row() : -1;
-        const int next = row + direction;
-        if (next >= 0 && next < group->childCount()) {
-            selectMatch(group->child(next));
-            return;
-        }
-    }
-    int row = direction > 0 ? 0 : documents - 1;
-    if (group)
-        row = (tree->indexFromItem(group).row() + direction + documents) % documents;
-    group = tree->topLevelItem(row);
-    selectMatch(group->child(byDocument || direction > 0 ? 0 : group->childCount() - 1));
-}
 }

@@ -4,11 +4,9 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::json;
 use std::{
     fs::File,
-    io::Read,
+    io::{BufRead, Read},
     path::Path,
-    process::Stdio,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 mod word97;
@@ -43,58 +41,29 @@ pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<(
     // fopen and stat. Let the wide process API select the document's directory and
     // pass the usual relative filename. Prefixing the leaf also protects leading '-'.
     let input = Path::new(".").join(leaf);
-    let mut child = command
+    command
         .args(["-t", "-w", "0", "-m", "UTF-8.txt"])
         .current_dir(parent)
-        .arg(&input)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| anyhow!("missing_decoder: antiword: {e}"))?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let output = thread::spawn(move || {
-        let mut b = Vec::new();
-        stdout
-            .take(MAX_TEXT_BYTES as u64 + 1)
-            .read_to_end(&mut b)
-            .map(|_| b)
-    });
-    let diagnostics = thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = stderr.take(8192).read_to_end(&mut b);
-        b
-    });
-    let started = Instant::now();
-    let status = loop {
-        if let Some(s) = child.try_wait()? {
-            break s;
-        }
-        if crate::search::stopped() {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = output.join();
-            let _ = diagnostics.join();
-            bail!("search interrupted");
-        }
-        if started.elapsed() > Duration::from_secs(20) {
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!("resource_limit: Word decoder timeout");
-        }
-        thread::sleep(Duration::from_millis(15));
-    };
-    let b = output
-        .join()
-        .map_err(|_| anyhow!("corrupt_document: Word decoder output"))??;
-    let diagnostic_bytes = diagnostics.join().unwrap_or_default();
-    let diag = String::from_utf8_lossy(&diagnostic_bytes).to_lowercase();
-    if b.len() > MAX_TEXT_BYTES {
-        bail!("resource_limit: Word decoder output");
+        .arg(&input);
+    let mut consumer_error = None;
+    let result = crate::converters::process::run(
+        &mut command,
+        "antiword",
+        Duration::from_secs(20),
+        |stream| match paragraphs(stream, out) {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                consumer_error = Some(error);
+                Ok(false)
+            }
+        },
+    )?;
+    if let Some(error) = consumer_error {
+        return Err(error);
     }
-    if !status.success() {
-        let reason = diagnostic(&diagnostic_bytes, &absolute, &input);
+    if let Some((status, detail)) = result {
+        let diag = detail.to_lowercase();
+        let reason = diagnostic(detail.as_bytes(), &absolute, &input);
         let reason = if reason.is_empty() {
             format!("antiword {status}")
         } else {
@@ -122,21 +91,44 @@ pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<(
         }
         bail!("corrupt_document: {reason}");
     }
-    let text = std::str::from_utf8(&b)
-        .map_err(|_| anyhow!("corrupt_document: invalid Word decoder text"))?;
-    let mut number = 0;
-    for line in text.lines() {
-        if !line.trim().is_empty() {
-            number += 1;
-            out.push(
-                line.to_owned(),
-                json!({"paragraph":number}),
-                format!("Paragraph {number}"),
-                None,
-            )?;
+    Ok(())
+}
+
+fn paragraphs(stream: &mut dyn BufRead, out: &mut Output) -> Result<()> {
+    let mut number = 0usize;
+    let mut line = Vec::new();
+    loop {
+        crate::search::checkpoint()?;
+        let chunk = stream.fill_buf()?;
+        let newline = chunk.iter().position(|b| *b == b'\n');
+        let end = newline.unwrap_or(chunk.len());
+        if line.len().saturating_add(end) > MAX_TEXT_BYTES {
+            bail!("resource_limit: Word decoder paragraph");
+        }
+        line.extend_from_slice(&chunk[..end]);
+        let eof = chunk.is_empty();
+        stream.consume(end + usize::from(newline.is_some()));
+        if newline.is_some() || eof {
+            if line.last() == Some(&b'\r') && newline.is_some() {
+                line.pop();
+            }
+            let text = std::str::from_utf8(&line)
+                .map_err(|_| anyhow!("corrupt_document: invalid Word decoder text"))?;
+            if !text.trim().is_empty() {
+                number += 1;
+                out.push(
+                    text.to_owned(),
+                    json!({"paragraph":number}),
+                    format!("Paragraph {number}"),
+                    None,
+                )?;
+            }
+            line.clear();
+        }
+        if eof {
+            return Ok(());
         }
     }
-    Ok(())
 }
 
 fn diagnostic(bytes: &[u8], absolute: &Path, argument: &Path) -> String {

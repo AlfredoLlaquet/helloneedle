@@ -1,6 +1,6 @@
 # Hello Needle native components
 
-Hello Needle @PROJECT_VERSION@ uses Qt @qt_version@ Core, Gui, Widgets and SVG. Poppler supplies `pdftotext` and `pdftoppm`. Antiword supplies the `antiword` command and its character maps. The Windows Setup installer and macOS disk image include the native runtime, Qt platform plugins, document tools and Spanish Qt translations. FreeBSD and Linux obtain these components through their package managers.
+Hello Needle @PROJECT_VERSION@ uses Qt @qt_version@ Core, Gui, Widgets and SVG. SQLite stores matches and diagnostics during a search. Poppler supplies `pdftotext` and `pdftoppm`. Antiword supplies the `antiword` command and its character maps. The Windows Setup installer and macOS disk image include the native runtime, Qt platform plugins, document tools and Spanish Qt translations. FreeBSD and Linux obtain these components through their package managers.
 
 The application and worker are distributed under GPL-3.0-or-later. The original Clapgrep attribution appears in `NOTICE.md`. The Rust code linked into the worker is inventoried in `LICENSES/rust/DEPENDENCIES.md`. Individual notices and license texts are available offline under `LICENSES/`. Each CI binary has a companion source archive containing the exact project revision, build scripts and vendored Rust dependencies. The installers also include a native runtime inventory and ship with the matching component sources and build recipes.
 
@@ -9,6 +9,7 @@ The application and worker are distributed under GPL-3.0-or-later. The original 
 | Component | Upstream source |
 | --- | --- |
 | Qt libraries, native plugins and translations | [Qt Base](https://code.qt.io/cgit/qt/qtbase.git/) · [Qt SVG](https://code.qt.io/cgit/qt/qtsvg.git/) · [Qt Translations](https://code.qt.io/cgit/qt/qttranslations.git/) |
+| SQLite embedded database | [SQLite source](https://www.sqlite.org/src/) |
 | Poppler command-line utilities | [Poppler source](https://gitlab.freedesktop.org/poppler/poppler) |
 | Antiword and its character maps | [Antiword source and distribution revisions](https://sources.debian.org/src/antiword/) |
 

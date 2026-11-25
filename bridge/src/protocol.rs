@@ -7,6 +7,7 @@ use std::{
     io::{self, Read, Write},
     path::Path,
 };
+mod match_copy;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +29,8 @@ pub(crate) struct SearchRequest {
     #[serde(default)]
     pub ignored: bool,
     #[serde(default)]
+    pub exclude_subdirectories: bool,
+    #[serde(default)]
     pub filenames: bool,
     #[serde(default)]
     pub path_pattern: String,
@@ -47,6 +50,10 @@ struct PreviewRequest {
     location: Value,
     #[serde(default)]
     block_start: usize,
+    #[serde(default)]
+    block_length: usize,
+    #[serde(default)]
+    copy_match: bool,
     revision: Option<String>,
 }
 
@@ -59,11 +66,10 @@ fn valid_mode(mode: &str) -> bool {
 }
 
 pub(crate) struct Emitter<W> {
-    pub count: usize,
-    pub files: usize,
-    pub documents_scanned: usize,
-    pub errors: usize,
-    pub truncated: bool,
+    pub count: u64,
+    pub files: u64,
+    pub documents_scanned: u64,
+    pub errors: u64,
     writer: W,
 }
 
@@ -75,7 +81,11 @@ impl<W: Write> Emitter<W> {
 
     pub fn send_serialized(&mut self, event: &[u8]) -> io::Result<()> {
         self.writer.write_all(event)?;
-        self.end_line()
+        self.writer.write_all(b"\n")
+    }
+
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
     }
 
     fn end_line(&mut self) -> io::Result<()> {
@@ -104,7 +114,7 @@ impl<W: Write> Emitter<W> {
     fn done(&mut self) -> io::Result<()> {
         self.send(&json!({"type":"done","count":self.count,"files":self.files,
                          "documentsScanned":self.documents_scanned,
-                         "errors":self.errors,"truncated":self.truncated}))
+                         "errors":self.errors,"truncated":false}))
     }
 }
 
@@ -131,34 +141,29 @@ fn context_range(blocks: &[Block], index: usize) -> std::ops::Range<usize> {
 // A selected HTML paragraph can now exceed the desktop's entire protocol frame.
 // Keep ordinary previews rich. For a giant paragraph, send the text around the
 // selected occurrence and its original UTF-16 offset for Qt's highlighter.
-pub(crate) fn clip_paragraph(block: &mut Block, focus: usize) {
+pub(crate) fn clip_paragraph(block: &mut Block, focus: usize, length: usize) {
     block.html = None;
     const NEARBY_CHARS: usize = 8192;
     if block.text.len() <= 2 * NEARBY_CHARS {
         return;
     }
+    let from = focus.saturating_sub(NEARBY_CHARS);
+    let until = focus.saturating_add(length).saturating_add(NEARBY_CHARS);
     let mut units = 0;
-    let center = block
-        .text
-        .char_indices()
-        .find_map(|(byte, ch)| {
-            if units + ch.len_utf16() > focus {
-                return Some(byte);
-            }
-            units += ch.len_utf16();
-            None
-        })
-        .unwrap_or(block.text.len());
-    let left = block.text[..center]
-        .char_indices()
-        .rev()
-        .nth(NEARBY_CHARS - 1)
-        .map_or(0, |(byte, _)| byte);
-    let right = block.text[center..]
-        .char_indices()
-        .nth(NEARBY_CHARS)
-        .map_or(block.text.len(), |(byte, _)| center + byte);
-    block.location["textOffset"] = json!(units - block.text[left..center].encode_utf16().count());
+    let mut left = None;
+    let mut right = block.text.len();
+    for (byte, ch) in block.text.char_indices() {
+        if units >= until {
+            right = byte;
+            break;
+        }
+        if left.is_none() && units + ch.len_utf16() > from {
+            left = Some((byte, units));
+        }
+        units += ch.len_utf16();
+    }
+    let (left, offset) = left.unwrap_or((right, units));
+    block.location["textOffset"] = json!(offset);
     block.text = block.text[left..right].to_owned();
 }
 
@@ -166,13 +171,14 @@ fn html_context(
     blocks: &mut [Block],
     index: usize,
     focus: usize,
+    length: usize,
     mut range: std::ops::Range<usize>,
 ) -> std::ops::Range<usize> {
     // Even the worst-case JSON escaping of 8 MiB fits a 64 MiB frame.
     const MAX_CONTEXT: usize = 8 * 1024 * 1024;
     let size = |b: &Block| b.text.len() + b.html.as_ref().map_or(0, String::len);
     if size(&blocks[index]) > MAX_CONTEXT {
-        clip_paragraph(&mut blocks[index], focus);
+        clip_paragraph(&mut blocks[index], focus, length);
     }
     let mut total: usize = blocks[range.clone()].iter().map(size).sum();
     while total > MAX_CONTEXT {
@@ -201,6 +207,7 @@ fn buffered_preview(
     mut doc: Document,
     index: usize,
     focus: usize,
+    length: usize,
 ) -> Result<PreviewBlocks, Failure> {
     if index >= doc.blocks.len() && !(doc.blocks.is_empty() && index == 0) {
         return Err(Failure::new(
@@ -214,7 +221,7 @@ fn buffered_preview(
         context_range(&doc.blocks, index)
     };
     if doc.kind == "html" && !range.is_empty() {
-        range = html_context(&mut doc.blocks, index, focus, range);
+        range = html_context(&mut doc.blocks, index, focus, length, range);
     }
     Ok(PreviewBlocks {
         kind: doc.kind,
@@ -233,24 +240,48 @@ fn load_preview(path: &Path, req: &PreviewRequest) -> Result<PreviewBlocks, Fail
             .ok_or_else(|| Failure::new("location", "Invalid block index"))?,
     };
     let (kind, blocks, index, total_blocks) = match Reader::for_path(path, &req.mode) {
-        Reader::Buffered(reader) => {
-            return buffered_preview(reader.read(path)?, index, req.block_start)
+        Reader::Html => {
+            return buffered_preview(
+                crate::html_document(path)?,
+                index,
+                req.block_start,
+                req.block_length,
+            )
         }
         Reader::Lines(kind) => {
-            let (blocks, selected, total) =
-                documents::text_stream::preview(path, kind, &req.location, req.block_start)
-                    .map_err(Failure::decoder)?;
+            let (blocks, selected, total) = documents::text_stream::preview(
+                path,
+                kind,
+                &req.location,
+                req.block_start,
+                req.block_length,
+            )
+            .map_err(Failure::decoder)?;
             (kind, blocks, selected, total)
         }
         Reader::Pdf => {
-            let block = documents::pdf::preview(path, &req.location, req.block_start)
-                .map_err(Failure::decoder)?;
-            ("pdf", vec![block], 0, None)
+            let (blocks, selected) =
+                documents::pdf::preview(path, &req.location, req.block_start, req.block_length)
+                    .map_err(Failure::decoder)?;
+            ("pdf", blocks, selected, None)
         }
         Reader::Docx => {
             let (blocks, selected, total) =
-                office::preview_docx(path, index, req.block_start).map_err(Failure::decoder)?;
+                office::preview_docx(path, index, req.block_start, req.block_length)
+                    .map_err(Failure::decoder)?;
             ("docx", blocks, selected, total)
+        }
+        Reader::Office(kind) => {
+            let (blocks, selected, total) =
+                office::preview(path, kind, index, req.block_start, req.block_length)
+                    .map_err(Failure::decoder)?;
+            (kind, blocks, selected, total)
+        }
+        Reader::Markdown => {
+            let (blocks, selected, total) =
+                documents::preview_markdown(path, index, req.block_start, req.block_length)
+                    .map_err(Failure::decoder)?;
+            ("markdown", blocks, selected, total)
         }
         Reader::Skip => ("filename", Vec::new(), 0, Some(0)),
     };
@@ -262,7 +293,7 @@ fn load_preview(path: &Path, req: &PreviewRequest) -> Result<PreviewBlocks, Fail
     })
 }
 
-fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Result<()> {
+fn preview<W: Write>(mut request: PreviewRequest, events: &mut Emitter<W>) -> io::Result<()> {
     if !valid_mode(&request.mode) {
         return events.error(
             Failure::new("request", "Mode must be document or source"),
@@ -287,6 +318,22 @@ fn preview<W: Write>(request: PreviewRequest, events: &mut Emitter<W>) -> io::Re
             Some(&path),
         );
     }
+    if request.copy_match {
+        if let Err(err) = match_copy::stream(&path, &request, events) {
+            return events.error(Failure::decoder(err), Some(&path));
+        }
+        if revision(&path).as_ref().ok() != Some(&before) {
+            return events.error(
+                Failure::new("changed", "File changed while being read"),
+                Some(&path),
+            );
+        }
+        events.files = 1;
+        return events.send(&json!({"type":"copyReady", "length":request.block_length}));
+    }
+    // The desktop pages longer selections using blockStart. Each response stays
+    // bounded even if a caller asks to preview a multi-gigabyte match at once.
+    request.block_length = request.block_length.min(256 * 1024);
     let content = match load_preview(&path, &request) {
         Ok(content) => content,
         Err(err) => return events.error(err, Some(&path)),
@@ -322,7 +369,6 @@ pub fn run<R: Read, W: Write>(command: &str, input: R, output: W) -> io::Result<
         files: 0,
         documents_scanned: 0,
         errors: 0,
-        truncated: false,
     };
     let mut bytes = Vec::new();
     const MAX_REQUEST: u64 = 1024 * 1024;
@@ -431,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_ignored_glob_and_filename_controls_work_outside_git() {
+    fn recursive_and_folder_only_searches_honor_filters_outside_git() {
         let dir = Folder::new();
         for name in [
             "shown.txt",
@@ -451,21 +497,40 @@ mod tests {
             .unwrap();
         }
         fs::write(dir.0.join(".gitignore"), "ignored.txt\n").unwrap();
+        let nested = dir.0.join("nested");
+        fs::create_dir_all(nested.join("deeper")).unwrap();
+        fs::write(nested.join("regular.txt"), "needle").unwrap();
+        fs::write(nested.join("deeper/regular.txt"), "needle").unwrap();
+        fs::write(nested.join("broken.docx"), "incomplete").unwrap();
         let mut req = json!({"folder":dir.0, "query":"needle", "pathPattern":"*.txt"});
-        let limited = events("search", req.clone());
-        assert_eq!(limited.last().unwrap()["count"], 1);
+        let recursive = events("search", req.clone());
+        assert_eq!(recursive.last().unwrap()["count"], 3);
+        assert_eq!(recursive.last().unwrap()["files"], 4);
+        req["excludeSubdirectories"] = json!(false);
+        assert_eq!(events("search", req.clone()).last(), recursive.last());
+        req["excludeSubdirectories"] = json!(true);
+        let root_only = events("search", req.clone());
+        assert_eq!(root_only.last().unwrap()["count"], 1);
+        assert_eq!(root_only.last().unwrap()["files"], 2);
         for key in ["hidden", "ignored", "filenames"] {
             req[key] = json!(true);
         }
-        let full = events("search", req);
+        let full = events("search", req.clone());
         assert_eq!(full.last().unwrap()["count"], 4);
+        assert_eq!(full.last().unwrap()["files"], 4);
         assert!(full
             .iter()
             .any(|r| r["kind"] == "filename" && r["location"]["filename"] == true));
+        req["pathPattern"] = json!("");
+        let shallow = events("search", req.clone());
+        assert_eq!(shallow.last().unwrap()["errors"], 0);
+        req["excludeSubdirectories"] = json!(false);
+        let recursive = events("search", req);
+        assert_eq!(recursive.last().unwrap()["errors"], 1);
     }
 
     #[test]
-    fn a_partially_searched_file_does_not_inflate_the_completed_count() {
+    fn a_file_with_more_than_ten_thousand_occurrences_finishes() {
         let dir = Folder::new();
         fs::write(dir.0.join("a.txt"), "no occurrences").unwrap();
         fs::write(dir.0.join("b.txt"), "x ".repeat(10_001)).unwrap();
@@ -475,9 +540,9 @@ mod tests {
             json!({"type":"progress","files":1,"documentsScanned":0})
         );
         let done = response.last().unwrap();
-        assert_eq!(done["count"], 10_000);
+        assert_eq!(done["count"], 10_001);
         assert_eq!(done["files"], 2);
-        assert_eq!(done["documentsScanned"], 1);
-        assert_eq!(done["truncated"], true);
+        assert_eq!(done["documentsScanned"], 2);
+        assert_eq!(done["truncated"], false);
     }
 }

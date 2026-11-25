@@ -13,6 +13,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
@@ -692,6 +693,14 @@ private slots:
         QVERIFY(selectHit("report.pdf", 1));
         QVERIFY(until([&] { return ready() && image->pixmap().toImage() != first; }));
         VERIFY_OK(guiqa::saveView(*window, "pdf-preview"));
+        auto *toggle = control<QAbstractButton>("pdfTextButton");
+        QVERIFY(toggle);
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QVERIFY(until([&] { return preview->isVisible()
+            && preview->toPlainText().contains("This is the second line on this page.")
+            && !selectedText("Needle").isNull(); }));
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QVERIFY(until(ready));
         const QSize original = image->pixmap().size();
         QTest::mouseClick(zoom, Qt::LeftButton);
         QVERIFY(until([&] { return image->pixmap().width() > original.width(); }));
@@ -727,6 +736,12 @@ private slots:
         bar->setValue(bar->minimum());
         QTest::qWait(150);
         QCOMPARE(bar->value(), bar->minimum());
+        auto *tile = control<QLabel>("pdfDetailRaster");
+        QVERIFY(tile);
+        for (int i = 0; i < 20 && qMax(image->width(), image->height()) * image->devicePixelRatioF() <= 1850; ++i)
+            QTest::mouseClick(zoom, Qt::LeftButton);
+        QVERIFY(until([&] { return tile->isVisible() && !tile->pixmap().isNull(); }));
+        QVERIFY(tile->width() < image->width() || tile->height() < image->height());
         QTest::mouseClick(fit, Qt::LeftButton);
         QVERIFY(until([&] { return image->pixmap().width() <= original.width() + 2; }));
         QTest::mouseClick(prev, Qt::LeftButton);
@@ -735,8 +750,7 @@ private slots:
         QVERIFY(until([&] { return prev->isEnabled() && label->text().contains('2'); }));
         QTest::mouseClick(next, Qt::LeftButton);
         QVERIFY(until([&] { return !next->isEnabled() && label->text().contains('3'); }));
-        auto *toggle = control<QAbstractButton>("pdfTextButton");
-        QVERIFY(toggle && toggle->isVisible());
+        QVERIFY(toggle->isVisible());
         QTest::mouseClick(toggle, Qt::LeftButton);
         QVERIFY(until([&] { return preview->isVisible() && preview->textCursor().block().text().contains("Closing page"); }));
         QTest::mouseClick(toggle, Qt::LeftButton);
@@ -802,10 +816,10 @@ private slots:
         for (auto *button : buttons) QVERIFY(button->isEnabled());
         QTest::mouseClick(buttons[0], Qt::LeftButton);
         QVERIFY(selected("zulu.txt", 1));
-        auto *originalHit = results->currentItem();
+        const QJsonObject originalHit = matchData(*results->currentItem());
         QVERIFY(stream.resume());
         QVERIFY(until([&] { return !cancel->isEnabled(); }));
-        QCOMPARE(results->currentItem(), originalHit);
+        QCOMPARE(matchData(*results->currentItem()), originalHit);
         QCOMPARE(results->topLevelItem(0)->text(0), QStringLiteral("alpha.txt"));
         QCOMPARE(results->topLevelItem(1)->text(0), QStringLiteral("zulu.txt"));
         results->topLevelItem(0)->setExpanded(false);
@@ -892,8 +906,260 @@ private slots:
             auto *handle = split->handle(1);
             const QPoint relative = heading->mapTo(split, QPoint()) - handle->mapTo(split, QPoint());
             const int gap = orientation == Qt::Horizontal ? relative.x() - handle->width() : relative.y() - handle->height();
-            QVERIFY2(gap >= 8, qPrintable(QStringLiteral("Preview content gap at splitter: %1").arg(gap)));
+            QVERIFY2(std::abs(gap - 24) <= 1, qPrintable(QStringLiteral("Preview content gap at splitter: %1").arg(gap)));
         }
+    }
+
+    void documentViewsAndScope()
+    {
+        QTemporaryDir docs;
+        QVERIFY(docs.isValid());
+        QDir root(docs.path());
+        QVERIFY(root.mkpath("A/inside") && root.mkpath("B"));
+        const QStringList paths{"A/inside/notes.txt", "B/notes.txt", "z.txt"};
+        for (const auto &relative : paths) {
+            QFile file(root.filePath(relative));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("Match here\n");
+        }
+        auto *view = control<QComboBox>("resultViewCombo");
+        auto *directory = control<QPlainTextEdit>("previewDirectory");
+        auto *scope = control<QCheckBox>("excludeSubdirectoriesCheck");
+        QVERIFY(view && directory && scope);
+        QCOMPARE(view->currentData().toString(), QStringLiteral("names"));
+        QVERIFY(!scope->isChecked());
+        QVERIFY(submit("Match", false, root.path()));
+        QCOMPARE(results->topLevelItemCount(), 3);
+        QCOMPARE(results->topLevelItem(0)->text(0), QStringLiteral("notes.txt"));
+        QCOMPARE(results->topLevelItem(1)->text(0), QStringLiteral("notes.txt"));
+        QCOMPARE(results->topLevelItem(2)->text(0), QStringLiteral("z.txt"));
+        QVERIFY(selectHit("notes.txt", 0));
+        const QString target = root.filePath(paths.first());
+        const QString parent = QDir::toNativeSeparators(QFileInfo(target).absolutePath());
+        QVERIFY(until([&] { return directory->isVisible() && directory->toPlainText().endsWith(parent); }));
+        auto *caption = control<QLabel>("previewDirectoryLabel");
+        QVERIFY(caption && caption->isVisible());
+        QCOMPARE(caption->text(), hn::ui("Directory:"));
+        QVERIFY(directory->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
+        directory->selectAll();
+        directory->copy();
+        QCOMPARE(QApplication::clipboard()->text(), parent);
+        QVERIFY(until([&] { return !selectedText("Match").isNull(); }));
+        const auto hit = matchData(*results->currentItem());
+        QCOMPARE(hit.value("path").toString(), target);
+        for (const auto &mode : {QStringLiteral("paths"), QStringLiteral("tree"), QStringLiteral("names")}) {
+            const int index = view->findData(mode);
+            QVERIFY(index >= 0);
+            view->setCurrentIndex(index);
+            QVERIFY(until([&] { return results->currentItem() && matchData(*results->currentItem()) == hit; }));
+            QVERIFY(directory->toPlainText().endsWith(parent));
+            QVERIFY(!selectedText("Match").isNull());
+            auto *file = results->currentItem()->parent();
+            QVERIFY(file);
+            if (mode == "tree") {
+                QCOMPARE(file->text(0), QStringLiteral("notes.txt"));
+                QVERIFY(file->parent() && file->parent()->parent());
+                QCOMPARE(file->parent()->text(0), QStringLiteral("inside"));
+                QCOMPARE(file->parent()->parent()->text(0), QStringLiteral("A"));
+                QVERIFY(file->parent()->isExpanded());
+                VERIFY_OK(guiqa::saveView(*window, "folder-tree-and-directory"));
+            } else if (mode == "paths") {
+                QCOMPARE(QDir::fromNativeSeparators(file->text(0)), paths.first());
+            }
+        }
+        ensureOptions();
+        scope->setChecked(true);
+        view->setCurrentIndex(view->findData("tree"));
+        QVERIFY(submit("Match", false, root.path()));
+        QCOMPARE(results->topLevelItemCount(), 1);
+        QCOMPARE(results->topLevelItem(0)->text(0), QStringLiteral("z.txt"));
+        QVERIFY(hits("notes.txt").isEmpty());
+        QVERIFY(until([&] { return directory->toPlainText().endsWith(QDir::toNativeSeparators(root.path())); }));
+        const QString longQuery = QString(32767, 'x') + "tail";
+        query->setText(longQuery);
+        QCOMPARE(query->text(), longQuery);
+        auto *pattern = control<QLineEdit>("pathPatternEdit");
+        pattern->setText(longQuery);
+        QCOMPARE(pattern->text(), longQuery);
+        const qint64 longLine = Q_INT64_C(2147483648);
+        QCOMPARE(hn::locationLabel({{"line",longLine}}, {}), hn::ui("Line %1").arg(longLine));
+        window->close();
+        hn::MainWindow reopened;
+        QCOMPARE(reopened.findChild<QComboBox *>("resultViewCombo")->currentData().toString(), QStringLiteral("tree"));
+        QVERIFY(reopened.findChild<QCheckBox *>("excludeSubdirectoriesCheck")->isChecked());
+    }
+
+    void allErrorDetails()
+    {
+        guiqa::SearchStream stream;
+        QByteArray diagnostics;
+        for (int n = 1; n <= 490; ++n) {
+            diagnostics += frame({{"type","error"}, {"code","read"},
+                {"path",stream.folder.filePath(QStringLiteral("file-%1.txt").arg(n))},
+                {"message",QStringLiteral("Diagnostic number %1.").arg(n)}});
+        }
+        QVERIFY(stream.prepare({}, diagnostics + frame({{"type","done"},{"files",490},{"count",0},{"errors",490}})));
+        control<QLineEdit>("folderEdit")->setText(stream.folder.path());
+        query->setText("Match");
+        stream.start(*search);
+        QVERIFY(stream.resume());
+        QVERIFY(until([&] { return search->isEnabled(); }));
+        auto *details = control<QAbstractButton>("issuesButton");
+        QVERIFY(details && details->isVisible());
+        QStringList collected;
+        bool copyable = false;
+        QTimer::singleShot(0, this, [&] {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto *body = dialog->findChild<QPlainTextEdit *>("errorDetailsText");
+            auto *next = dialog->findChild<QAbstractButton *>("nextErrorsButton");
+            if (body && next) {
+                for (int p = 0; p < 490; ++p) {
+                    collected << body->toPlainText();
+                    if (!next->isEnabled()) break;
+                    next->click();
+                }
+                auto cursor = body->document()->find("Diagnostic number 490.");
+                if (!cursor.isNull()) {
+                    body->setTextCursor(cursor);
+                    body->copy();
+                    copyable = QApplication::clipboard()->text() == "Diagnostic number 490.";
+                }
+            }
+            dialog->accept();
+        });
+        details->click();
+        const QString all = collected.join('\n');
+        for (int n = 1; n <= 490; ++n) {
+            QCOMPARE(all.count(QStringLiteral("file-%1.txt").arg(n)), 1);
+            QCOMPARE(all.count(QStringLiteral("Diagnostic number %1.").arg(n)), 1);
+        }
+        QVERIFY(copyable);
+    }
+
+    void copyLongMatch()
+    {
+        QTemporaryDir documents;
+        QFile file(documents.filePath("large.txt"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QString expected = QStringLiteral("Start") + QString(145000, 'x') + QStringLiteral("🧵End");
+        file.write("prefix " + expected.toUtf8() + " suffix");
+        file.close();
+        ensureOptions();
+        control<QCheckBox>("regexCheck")->setChecked(true);
+        QVERIFY(submit(QStringLiteral("Startx+🧵End"), false, documents.path()));
+        QVERIFY(selectHit("large.txt"));
+        auto *nextPart = control<QAbstractButton>("nextPreviewPart");
+        auto *copy = control<QAbstractButton>("copyMatchButton");
+        QVERIFY(nextPart && copy);
+        QVERIFY(until([&] { return nextPart->isVisible() && nextPart->isEnabled(); }));
+        nextPart->click();
+        QVERIFY(until([&] { return preview->textCursor().selectedText().endsWith(QStringLiteral("🧵End")); }));
+        copy->click();
+        QVERIFY(until([&] { return QApplication::clipboard()->text() == expected; }, 15000));
+    }
+
+    void bulkResultNavigation()
+    {
+        QTemporaryDir docs;
+        QVERIFY(docs.isValid());
+        QFile first(docs.filePath("a.txt")), last(docs.filePath("z.txt"));
+        QVERIFY(first.open(QIODevice::WriteOnly) && last.open(QIODevice::WriteOnly));
+        QCOMPARE(first.write(QByteArray("Needle\n").repeated(100000)), qint64(700000));
+        last.write("Needle at the end\n");
+        first.close();
+        last.close();
+        control<QLineEdit>("folderEdit")->setText(docs.path());
+        query->setText("Needle");
+        search->click();
+        QVERIFY(until([&] { return search->isEnabled(); }, 100000));
+        auto *status = control<QLabel>("statusLabel");
+        QVERIFY2(status->text().contains("100001"), qPrintable(status->text()));
+        // Collapsed file groups must never allocate one Qt item per occurrence.
+        int residentRows = 0;
+        for (QTreeWidgetItemIterator it(results); *it; ++it) ++residentRows;
+        QVERIFY(residentRows < 1000);
+        QVERIFY(selectHit("a.txt", 0));
+        control<QToolButton>("previousMatchButton")->click();
+        QVERIFY(until([&] { return !selectedText("Needle").isNull()
+                    && preview->toPlainText().contains("at the end"); }));
+        control<QToolButton>("previousMatchButton")->click();
+        QVERIFY(until([&] { auto *item = results->currentItem();
+            return item && matchData(*item)["location"].toObject()["line"].toInteger() == 100000
+                && !selectedText("Needle").isNull(); }));
+    }
+
+    void documentPageBoundaries()
+    {
+        guiqa::SearchStream stream;
+        QVERIFY(stream.folder.isValid());
+        auto name = [](int n) { return QStringLiteral("d%1-Match.txt").arg(n, 3, 10, QLatin1Char('0')); };
+        auto writeDocument = [&](const QString &fileName) {
+            QFile file(stream.folder.filePath(fileName));
+            return file.open(QIODevice::WriteOnly) && file.write("Match\n") == 6;
+        };
+        auto selectedName = [&] {
+            auto *item = results->currentItem();
+            return item ? QFileInfo(matchData(*item)["path"].toString()).fileName() : QString();
+        };
+        QByteArray initial;
+        for (int n = 0; n < 130; ++n) {
+            QVERIFY(writeDocument(name(n)));
+            const QString path = stream.folder.filePath(name(n));
+            if (n == 10) {
+                initial += frame({{"type", "match"}, {"path", path}, {"displayPath", name(n)},
+                    {"kind", "filename"}, {"text", name(n)}, {"start", 5}, {"length", 5},
+                    {"blockStart", 5}, {"blockLength", 5}, {"location", QJsonObject{{"index", 0}, {"filename", true}}}});
+            }
+            initial += textHit(path, 1);
+        }
+        const QString earlier = QStringLiteral("a-Match.txt");
+        QVERIFY(writeDocument(earlier));
+        const QByteArray rest = textHit(stream.folder.filePath(earlier), 1)
+            + frame({{"type", "discard"}, {"path", stream.folder.filePath(name(10))}})
+            + searchDone(131, 131);
+        QVERIFY(stream.prepare(initial, rest));
+        auto *views = control<QComboBox>("resultViewCombo");
+        views->setCurrentIndex(views->findData("names"));
+        control<QLineEdit>("folderEdit")->setText(stream.folder.path());
+        query->setText("Match");
+        stream.start(*search);
+        auto *range = control<QLabel>("filesPageLabel");
+        auto *back = control<QPushButton>("previousFilesPageButton");
+        auto *next = control<QPushButton>("nextFilesPageButton");
+        QVERIFY(range && back && next);
+        auto page = [&](int first, int last, int total) {
+            return range->text() == hn::ui("Files %1–%2 of %3").arg(first).arg(last).arg(total);
+        };
+        QVERIFY(until([&] { return page(1, 64, 130); }));
+        QVERIFY(selectHit(name(63)));
+        // Inserting an earlier file moves the selected document onto page two.
+        // Withdrawing another file's content keeps its filename and must preserve that pending move.
+        QVERIFY(stream.resume());
+        QVERIFY(until([&] { return search->isEnabled() && page(65, 128, 131); }));
+        QCOMPARE(selectedName(), name(63));
+        QCOMPARE(results->topLevelItemCount(), 64);
+        back->click();
+        QCOMPARE(selectedName(), earlier);
+        QVERIFY(page(1, 64, 131));
+        const auto survivors = hits(name(10));
+        QCOMPARE(survivors.size(), 1);
+        QCOMPARE(matchData(*survivors.front())["kind"].toString(), QStringLiteral("filename"));
+        next->click();
+        QVERIFY(page(65, 128, 131));
+        QCOMPARE(selectedName(), name(63));
+        next->click();
+        QVERIFY(page(129, 131, 131));
+        QCOMPARE(results->topLevelItemCount(), 3);
+        QCOMPARE(selectedName(), name(127));
+        QVERIFY(!next->isEnabled());
+        QVERIFY(selectHit(name(129)));
+        control<QToolButton>("nextDocumentButton")->click();
+        QCOMPARE(selectedName(), earlier);
+        QVERIFY(page(1, 64, 131));
+        control<QToolButton>("previousDocumentButton")->click();
+        QCOMPARE(selectedName(), name(129));
+        QVERIFY(page(129, 131, 131));
     }
 
     void performanceSettings()

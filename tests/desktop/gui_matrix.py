@@ -20,7 +20,7 @@ from document_fixtures import write_documents
 FULL = [
     "firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "wordAndOfficePreviews",
     "markupModes", "pdfNavigation", "optionsAndCancellation", "languageMenu", "helpAndCredits",
-    "statusBarLink", "scannedFilesAndErrors", "resultNavigation", "previewCentering", "performanceSettings",
+    "statusBarLink", "scannedFilesAndErrors", "resultNavigation", "previewCentering", "performanceSettings", "documentViewsAndScope", "allErrorDetails",
 ]
 SCALED = ["firstLaunch", "optionsAndMenus", "unicodeAndRepeat", "statusBarLink",
           "scannedFilesAndErrors", "compactWorkArea", "resultNavigation", "previewCentering", "performanceSettings"]
@@ -38,6 +38,8 @@ def scenarios():
                 yield f"{language}-{appearance}-{suffix}", language, appearance, factor, (
                     FULL if factor == "1" else SCALED
                 )
+    yield "bulk-results", "en", "system", "1", ["bulkResultNavigation", "copyLongMatch"]
+    yield "document-pages", "en", "system", "1", ["documentPageBoundaries"]
     yield "directory-selection", "es", "system", "1", ["directorySelection"]
 
 

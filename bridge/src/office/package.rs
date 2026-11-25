@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::{MAX_FILE_BYTES, MAX_TEXT_BYTES, MAX_XML_NODES};
+use super::{MAX_TEXT_BYTES, MAX_XML_NODES};
 use anyhow::{anyhow, bail, Result};
 use roxmltree::{Document, ParsingOptions};
 use std::{
@@ -31,7 +31,6 @@ pub(super) fn parse(xml: &str) -> Result<Document<'_>> {
 
 pub(super) struct Package {
     zip: ZipArchive<File>,
-    used: u64,
 }
 #[derive(Clone)]
 pub(super) struct Rel {
@@ -143,7 +142,7 @@ impl Package {
         if zip.len() as u64 > MAX_ENTRIES {
             bail!("resource_limit: ZIP entry count");
         }
-        Ok(Self { zip, used: 0 })
+        Ok(Self { zip })
     }
     pub fn required(&mut self, part: &str) -> Result<String> {
         self.optional(part)?
@@ -169,9 +168,7 @@ impl Package {
     }
 
     pub fn optional(&mut self, part: &str) -> Result<Option<String>> {
-        let remaining = MAX_FILE_BYTES
-            .saturating_sub(self.used)
-            .min(MAX_TEXT_BYTES as u64);
+        let remaining = MAX_TEXT_BYTES as u64;
         let Some(file) = self.entry(part)? else {
             return Ok(None);
         };
@@ -182,7 +179,6 @@ impl Package {
         file.take(remaining + 1)
             .read_to_end(&mut data)
             .map_err(|e| anyhow!("corrupt_document: ZIP entry: {e}"))?;
-        self.used += data.len() as u64;
         if data.len() as u64 > remaining {
             bail!("resource_limit: expanded ZIP data");
         }

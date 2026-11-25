@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Character and paragraph properties from Word's FKP pages and fast-save pieces.
 use super::styles::Styles;
-use super::{bytes, u16_at, u32_at, MAX_RUNS};
+use super::{bytes, index_room, u16_at, u32_at, Indexed};
 use anyhow::{anyhow, ensure, Result};
 
 const DELETED: u8 = 1;
@@ -260,7 +260,7 @@ pub(super) struct Run<T> {
     pub properties: T,
 }
 
-pub(super) fn character_runs(bte: &[u8], word: &[u8]) -> Result<Vec<Run<Properties>>> {
+pub(super) fn character_runs(bte: &[u8], word: &mut Indexed) -> Result<Vec<Run<Properties>>> {
     let mut ranges: Vec<Run<Properties>> = Vec::new();
     visit_fkp(bte, word, 1, |start, end, record| {
         let Some((&len, data)) = record.split_first() else {
@@ -276,6 +276,7 @@ pub(super) fn character_runs(bte: &[u8], word: &[u8]) -> Result<Vec<Run<Properti
                 return Ok(());
             }
         }
+        index_room(&ranges)?;
         ranges.push(Run {
             start,
             end,
@@ -290,7 +291,7 @@ pub(super) fn character_runs(bte: &[u8], word: &[u8]) -> Result<Vec<Run<Properti
 /// The two indexes share the layout of their PLC, FKP range array and half-word offsets.
 pub(super) fn visit_fkp(
     bte: &[u8],
-    word: &[u8],
+    word: &mut Indexed,
     descriptor: usize,
     mut visit: impl FnMut(usize, usize, &[u8]) -> Result<()>,
 ) -> Result<()> {
@@ -303,10 +304,9 @@ pub(super) fn visit_fkp(
     );
     let pages = (bte.len() - 4) / 8;
     ensure!(
-        pages <= MAX_RUNS && pages <= word.len() / 512,
+        pages as u64 <= word.len / 512,
         "corrupt_document: impossible Word formatting page count"
     );
-    let mut total = 0;
     for i in 0..pages {
         let begin = u32_at(bte, 4 * i)? as usize;
         let limit = u32_at(bte, 4 * (i + 1))? as usize;
@@ -315,18 +315,15 @@ pub(super) fn visit_fkp(
             "corrupt_document: unordered Word formatting pages"
         );
         let pn = (u32_at(bte, 4 * (pages + 1 + i))? & 0x003f_ffff) as usize;
-        let page = bytes(word, pn * 512, 512)?;
+        let mut page_bytes = [0; 512];
+        word.fill(pn * 512, &mut page_bytes)?;
+        let page = &page_bytes;
         let count = usize::from(page[511]);
         let offsets = 4 * (count + 1);
         let first_record = offsets + count * descriptor;
         ensure!(
             count > 0 && first_record <= 511,
             "corrupt_document: invalid Word formatting page"
-        );
-        total += count;
-        ensure!(
-            total <= MAX_RUNS,
-            "resource_limit: binary Word formatting runs"
         );
         for j in 0..count {
             let a = u32_at(page, j * 4)? as usize;

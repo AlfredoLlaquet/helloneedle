@@ -77,6 +77,19 @@ const DRAW: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const OFFICE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 #[test]
+fn docx_grid_before_and_cell_spans_keep_wide_coordinates() {
+    let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+    <w:tbl><w:tr><w:trPr><w:gridBefore w:val="20000"/></w:trPr>
+    <w:tc><w:tcPr><w:gridSpan w:val="30000"/></w:tcPr><w:p><w:r><w:t>first</w:t></w:r></w:p></w:tc>
+    <w:tc><w:p><w:r><w:t>second</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+    let document = read("docx", &zip(&[("word/document.xml", xml)])).unwrap();
+    assert_eq!(document.blocks[0].location["column"], 20_001);
+    assert_eq!(document.blocks[1].location["column"], 50_001);
+    let invalid = xml.replace("20000", &usize::MAX.to_string());
+    assert!(read("docx", &zip(&[("word/document.xml", &invalid)])).is_err());
+}
+
+#[test]
 fn docx_joins_runs_and_retains_safe_rich_text_headings_and_table_coordinates() {
     let word = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
  <w:p><w:pPr><w:pStyle w:val="TitleTwo"/></w:pPr><w:r><w:t>Need</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>le &amp; &lt;needle&gt;</w:t></w:r></w:p>
@@ -528,7 +541,7 @@ fn docx_streams_to_the_last_paragraph_across_large_xml_and_preserves_preview_ind
     .unwrap();
     assert_eq!(count, REPEATS + 1);
 
-    let (context, selected, total) = preview_docx(&file.0, REPEATS, 7).unwrap();
+    let (context, selected, total) = preview_docx(&file.0, REPEATS, 7, 0).unwrap();
     assert_eq!(total, Some(count));
     assert_eq!(context.len(), 13);
     assert_eq!(context[selected].location["index"], REPEATS);
@@ -567,7 +580,7 @@ fn docx_streams_utf16_with_rebound_namespaces_and_can_stop_at_a_match() {
             .unwrap();
         archive.write_all(&data).unwrap();
         let file = Fixture::new("docx", &archive.finish().unwrap().into_inner());
-        let (context, index, total) = preview_docx(&file.0, 1, 0).unwrap();
+        let (context, index, total) = preview_docx(&file.0, 1, 0, 0).unwrap();
         assert_eq!((total, index), (Some(2), 1));
         assert_eq!(context[0].text, "日😀 & end");
         assert_eq!(context[0].location["heading_level"], 4);
@@ -605,7 +618,7 @@ fn docx_large_formatted_paragraph_previews_the_selected_unicode_occurrence() {
     );
     let file = Fixture::new("docx", &zip(&[("word/document.xml", &body)]));
     let focus = prefix.encode_utf16().count() + filler.len();
-    let (blocks, selected, total) = preview_docx(&file.0, 0, focus).unwrap();
+    let (blocks, selected, total) = preview_docx(&file.0, 0, focus, 0).unwrap();
     assert_eq!((total, selected), (Some(1), 0));
     let block = &blocks[selected];
     let start = focus - block.location["textOffset"].as_u64().unwrap() as usize;
@@ -624,9 +637,158 @@ fn docx_early_preview_finishes_after_its_neighbors() {
     );
     xml.push_str(&"<w:p><w:r><w:t>searchable</w:t></w:r></w:p>".repeat(120));
     let file = Fixture::new("docx", &zip(&[("word/document.xml", &xml)]));
-    let (context, selected, total) = preview_docx(&file.0, 15, 0).unwrap();
+    let (context, selected, total) = preview_docx(&file.0, 15, 0, 0).unwrap();
     assert_eq!((selected, total), (12, None));
     assert_eq!(context.len(), 25);
     assert_eq!(context[selected].location["paragraph"], 16);
     assert!(visit_docx(&file.0, |_| Ok(true)).is_err());
+}
+
+#[test]
+fn xlsx_streams_past_block_node_and_total_text_counts() {
+    let workbook = format!(
+        r#"<workbook xmlns="{SHEET}" xmlns:r="{OFFICE_REL}"><sheets><sheet name="Inventory" r:id="sheet"/></sheets></workbook>"#
+    );
+    let relationships = rels(&[
+        ("sheet", "worksheet", "sheet.xml", false),
+        ("words", "sharedStrings", "strings.xml", false),
+    ]);
+    // Distinct strings exceed the in-memory index. Both lookups below must work from disk.
+    let filler = "x".repeat(350);
+    let mut strings = format!(r#"<sst xmlns="{SHEET}">"#);
+    for index in 0..3000 {
+        strings.push_str(&format!("<si><t>{index}{filler}</t></si>"));
+    }
+    strings.push_str("<si><t>final needle</t></si></sst>");
+    let fixture = Fixture::new("xlsx", b"");
+    let mut zip = ZipWriter::new(File::create(&fixture.0).unwrap());
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (part, xml) in [
+        ("xl/workbook.xml", workbook),
+        ("xl/_rels/workbook.xml.rels", relationships),
+        ("xl/strings.xml", strings),
+    ] {
+        zip.start_file(part, options).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+    zip.start_file("xl/sheet.xml", options).unwrap();
+    write!(zip, r#"<worksheet xmlns="{SHEET}"><sheetData>"#).unwrap();
+    const ROWS: usize = 100_001;
+    let group = r#"<row><c t="s"><v>0</v></c></row>"#.repeat(1000);
+    for _ in 0..100 {
+        zip.write_all(group.as_bytes()).unwrap();
+    }
+    zip.write_all(b"<row><c t=\"s\"><v>3000</v></c></row></sheetData></worksheet>")
+        .unwrap();
+    zip.finish().unwrap();
+
+    let mut seen = 0;
+    visit(&fixture.0, "xlsx", |block| {
+        seen += 1;
+        if seen == ROWS {
+            assert_eq!(block.text, "final needle");
+            assert_eq!(block.location["cell"], "A100001");
+        }
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(seen, ROWS);
+    // A preview can stop once it has its neighborhood.
+    let (blocks, selected, total) = preview(&fixture.0, "xlsx", 2, 0, 1).unwrap();
+    assert_eq!(blocks[selected].location["cell"], "A3");
+    assert_eq!(total, None);
+}
+
+#[test]
+fn slides_with_more_than_64_mib_of_serially_processed_xml_are_searchable() {
+    let file = Fixture::new("pptx", b"");
+    let mut zip = ZipWriter::new(File::create(&file.0).unwrap());
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut presentation =
+        format!(r#"<p:presentation xmlns:p="{PPT}" xmlns:r="{OFFICE_REL}"><p:sldIdLst>"#);
+    let mut relationships = String::from(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    );
+    // A large, legitimate embedded media part can be skipped without reading it.
+    zip.start_file("ppt/media/video.bin", options).unwrap();
+    let padding = vec![b'x'; 64 * 1024];
+    for _ in 0..16 {
+        zip.write_all(&padding).unwrap();
+    }
+    for n in 1..=8 {
+        presentation.push_str(&format!(r#"<p:sldId r:id="s{n}"/>"#));
+        relationships.push_str(&format!(
+            r#"<Relationship Id="s{n}" Type="{OFFICE_REL}/slide" Target="slide{n}.xml"/>"#
+        ));
+        zip.start_file(format!("ppt/slide{n}.xml"), options)
+            .unwrap();
+        write!(
+            zip,
+            r#"<p:sld xmlns:p="{PPT}" xmlns:a="{DRAW}"><p:cSld><!--"#
+        )
+        .unwrap();
+        for _ in 0..128 {
+            zip.write_all(&padding).unwrap();
+        }
+        write!(
+            zip,
+            "--><a:p><a:r><a:t>slide {n}</a:t></a:r></a:p></p:cSld></p:sld>"
+        )
+        .unwrap();
+    }
+    presentation.push_str("</p:sldIdLst></p:presentation>");
+    relationships.push_str("</Relationships>");
+    for (part, xml) in [
+        ("ppt/presentation.xml", presentation),
+        ("ppt/_rels/presentation.xml.rels", relationships),
+    ] {
+        zip.start_file(part, options).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    assert!(fs::metadata(&file.0).unwrap().len() > 64 * 1024 * 1024);
+    let mut hits = Vec::new();
+    visit(&file.0, "pptx", |block| {
+        hits.push(block.text);
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(hits.len(), 8);
+    assert_eq!(hits.last().unwrap(), "slide 8");
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn ods_skips_a_trillion_nonmatching_cells_and_previews_and_copies_the_last_match() {
+    let body = r#"<office:spreadsheet><table:table table:name="Huge"><table:table-row table:number-rows-repeated="1000000"><table:table-cell table:number-columns-repeated="1000000" office:value-type="string" office:string-value="other"/></table:table-row><table:table-row><table:table-cell table:number-columns-repeated="3" office:value-type="string" office:string-value="🧵target"/></table:table-row></table:table></office:spreadsheet>"#;
+    let content = odf(body, "", false);
+    let fixture = Fixture::new("ods", &zip(&[("content.xml", &content)]));
+    let matcher = grep_regex::RegexMatcher::new("target").unwrap();
+    let mut hits = Vec::new();
+    visit_matching(&fixture.0, "ods", &matcher, |block| {
+        hits.push(block);
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(hits.len(), 3);
+    let target = 1_000_000_000_002usize;
+    assert_eq!(hits[2].location["index"], target);
+    assert_eq!(hits[2].label, "Huge!C1000001");
+    let (context, index, total) = preview(&fixture.0, "ods", target, 2, 6).unwrap();
+    assert_eq!(total, Some(target + 1));
+    assert_eq!(context[index].label, hits[2].label);
+    assert!(context.iter().any(|b| b.text == "other"));
+    let request = json!({"path":fixture.0,"location":hits[2].location,"blockStart":2,"blockLength":6,"copyMatch":true});
+    let mut events = Vec::new();
+    crate::protocol::run("preview", request.to_string().as_bytes(), &mut events).unwrap();
+    let events: Vec<Value> = serde_json::Deserializer::from_slice(&events)
+        .into_iter()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert!(events
+        .iter()
+        .any(|e| e["type"] == "matchText" && e["text"] == "target"));
+    assert!(events
+        .iter()
+        .any(|e| e["type"] == "copyReady" && e["length"] == 6));
 }

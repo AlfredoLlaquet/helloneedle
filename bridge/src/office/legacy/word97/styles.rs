@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Word 97 style definitions and logical paragraph boundaries ([MS-DOC] 2.4.2, 2.4.6).
 use super::properties::{grpprl, visit_fkp, Properties, Run};
-use super::{bytes, u16_at, Piece, MAX_RUNS};
+use super::{bytes, index_room, u16_at, Indexed, Piece};
 use anyhow::{anyhow, ensure, Result};
 
 const NO_PARENT: u16 = 0x0fff;
@@ -141,7 +141,11 @@ pub(super) struct Paragraph {
     pub style: u16,
 }
 
-pub(super) fn paragraphs(bte: &[u8], word: &[u8], pieces: &[Piece<'_>]) -> Result<Vec<Paragraph>> {
+pub(super) fn paragraphs(
+    bte: &[u8],
+    word: &mut Indexed,
+    pieces: &[Piece<'_>],
+) -> Result<Vec<Paragraph>> {
     let mut physical = Vec::new();
     visit_fkp(bte, word, 13, |start, end, record| {
         let style = match record.split_first() {
@@ -162,6 +166,7 @@ pub(super) fn paragraphs(bte: &[u8], word: &[u8], pieces: &[Piece<'_>]) -> Resul
                 grpprl(&data[2..])?.paragraph_style(style)
             }
         };
+        index_room(&physical)?;
         physical.push(Run {
             start,
             end,
@@ -179,10 +184,7 @@ pub(super) fn paragraphs(bte: &[u8], word: &[u8], pieces: &[Piece<'_>]) -> Resul
                 (run.end - piece.start) % piece.width == 0,
                 "corrupt_document: misaligned Word paragraph boundary"
             );
-            ensure!(
-                logical.len() < MAX_RUNS,
-                "resource_limit: binary Word paragraph formatting"
-            );
+            index_room(&logical)?;
             logical.push(Paragraph {
                 end_cp: piece.cp + (run.end - piece.start) / piece.width,
                 style: piece.properties.paragraph_style(run.properties),

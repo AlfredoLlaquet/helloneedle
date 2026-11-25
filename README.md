@@ -93,6 +93,10 @@ Hello Needle 1.1.0 on FreeBSD found 15 matches across 13 scanned documents. In t
 
 ### Changes in the 1.2.0 development build
 
+- **See every match and every file error.** Searches continue past 10,000 matches. Large result sets use temporary disk space. You can navigate to the last occurrence while the results list displays a page at a time. **Details…** lets you read and copy every file error, including those beyond the first 200.
+- **Choose how to see your files.** The **View** menu beside **Results** offers **File names** (the default), **File paths** and **Folder tree**. The preview always shows the selected file’s directory on a separate, selectable line. Turn on **Options → Exclude subdirectories** to search only the chosen folder. Both choices are remembered.
+- **Read the complete match.** Use **Copy match** for the entire occurrence. A very long match opens in parts and can be saved directly to a file. In PDFs, **Show text** includes the other lines on the selected page. Zooming further into the printed page brings finer detail into view.
+- **Search larger documents and logs.** Markdown and Office readers can process documents beyond the former file-size and paragraph limits. Colored terminal logs are searchable as readable text, even when a color change occurs in the middle of a word.
 - **Move through results as they arrive.** Four icon buttons under **Results** select the next document, next match, previous match, or previous document. The tree follows your selection and the preview centers the highlighted passage. [Navigation and keyboard shortcuts](#move-between-results)
 - **Search several files at once.** Hello Needle normally uses half the logical processors available to it. **File → Settings…** lets you change the number of workers and simultaneous PDF conversions. [Adjust search performance](#adjust-search-performance)
 - **Follow the whole folder scan.** **Files scanned** advances once for every file examined after your filters apply. Videos, archives, other recognized binary files, and PDFs with no searchable text all count. Hello Needle silently passes over their contents. Files with unfamiliar extensions are checked for readable text. **Search file names** can still find a video or archive by name. **Details…** lists files that actually failed to open or process.
@@ -129,6 +133,7 @@ Choose **Source** to search the saved HTML or Markdown itself. A search for `<st
 
 Open **Options** to limit the search to certain files or change what counts as a match.
 
+- In the development build, select **Exclude subdirectories** to search only files directly inside the chosen folder. Clear it to include all its subfolders again.
 - Set **Path filter** to `*.pdf` to search just the PDFs in the folder and its subfolders.
 - Turn on **Case sensitive** to distinguish `May` from `may`. Turn on **Regular expression** to search for a pattern.
 - Turn on **Search file names** to include matches in filenames as well as in their contents. **Include hidden files** and **Include ignored files** let you search files the default search skips.
@@ -145,6 +150,8 @@ The four buttons below **Results** become available with the first match. Their 
 | Next match | F3 or Alt+Down | Next match, continuing into the next document |
 | Previous match | Shift+F3 or Alt+Up | Previous match, continuing into the previous document |
 | Previous document | Ctrl+Up | First match in the previous document |
+
+Use **View** to control how the files are listed. **File names** sorts by name. If two files share a name, their relative paths determine the order. **File paths** shows paths starting at the search folder. **Folder tree** lets you expand a directory and browse the files beneath it. Switching views keeps the same match selected. In all three views, the line below the preview heading gives the full directory and lets you copy it.
 
 At either end, navigation wraps through the results already found. Selecting an occurrence expands its document and brings the highlighted passage to the vertical center of the text preview. You can then scroll freely. In the printed PDF view, Hello Needle centers the highlighted words as far as the page’s scroll range permits.
 
@@ -181,7 +188,7 @@ The recipes below build the current source from Git. To build the exact 1.1.0 re
 Both FreeBSD amd64 packages use the same dependencies and build commands. On FreeBSD 14.x or 15.x, install the compiler tools, Qt, and the PDF and Word readers as **root**. The C++ compiler comes with the base system.
 
 ```sh
-pkg install git cmake ninja rust python3 qt6-base qt6-svg qt6-translations poppler-utils antiword
+pkg install git cmake ninja rust python3 sqlite3 qt6-base qt6-svg qt6-translations poppler-utils antiword
 ```
 
 As your **desktop account**, get the source and build the application.
@@ -207,7 +214,7 @@ On an Ubuntu 24.04 desktop, open Terminal and install the development packages.
 
 ```sh
 sudo apt update
-sudo apt install git curl build-essential cmake ninja-build python3 qt6-base-dev qt6-svg-dev \
+sudo apt install git curl build-essential cmake ninja-build python3 libsqlite3-dev qt6-base-dev qt6-svg-dev \
   qt6-qpa-plugins qt6-translations-l10n poppler-utils antiword
 ```
 
@@ -239,7 +246,7 @@ Install Git, the UCRT64 compilers, Qt, and the document readers.
 ```sh
 pacman -S --needed git \
   mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rust,python} \
-  mingw-w64-ucrt-x86_64-{qt6-base,qt6-svg,qt6-translations,poppler,poppler-data,antiword}
+  mingw-w64-ucrt-x86_64-{sqlite3,qt6-base,qt6-svg,qt6-translations,poppler,poppler-data,antiword}
 ```
 
 Get the source, build it, and install a local copy in a folder named `stage` inside the checkout.
@@ -264,7 +271,7 @@ Open Terminal and install the tools and libraries. The commands use the standard
 ```sh
 export PATH="/opt/local/bin:/opt/local/sbin:$PATH"
 export CMAKE_PREFIX_PATH=/opt/local/libexec/qt6:/opt/local
-sudo /opt/local/bin/port install cmake ninja rust cargo python313 qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword
+sudo /opt/local/bin/port install cmake ninja rust cargo python313 sqlite3 qt6-qtbase qt6-qtsvg qt6-qttranslations poppler antiword
 ```
 
 Get the source and compile it for your Mac’s processor. Install the application in your own **Applications** folder.
