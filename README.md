@@ -1,3 +1,14 @@
+<table>
+  <tr>
+    <td width="128" valign="middle">
+      <a href="https://github.com/AlfredoLlaquet/bsd-first">
+        <img src="./bsd-first.svg" alt="BSD first" width="128">
+      </a>
+    </td>
+    <td valign="middle">This application was built and tested on BSD first to make it run well on as many operating systems as possible.</td>
+  </tr>
+</table>
+
 # Hello Needle
 
 <img align="right" src="desktop/qt/helloneedle.png" width="72" height="72" alt="Hello Needle’s astonished cow">
