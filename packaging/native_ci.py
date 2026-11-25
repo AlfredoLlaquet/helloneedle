@@ -199,6 +199,8 @@ def freebsd(stage, dist, work, version):
 
 
 def build(args):
+    if args.freebsd_preview and (SYSTEM != "FreeBSD" or min(args.freebsd_preview) < 1):
+        raise SystemExit("A FreeBSD preview requires positive workflow run and attempt numbers on FreeBSD.")
     work, dist = args.work.resolve(), args.output.resolve()
     work.mkdir(parents=True, exist_ok=True)
     dist.mkdir(parents=True, exist_ok=True)
@@ -222,12 +224,20 @@ def build(args):
     if worker_version != f"helloneedle-worker {version}":
         raise SystemExit(f"Worker reports {worker_version!r} for desktop version {version}.")
     metadata = environment(revision, version, bindir)
+    package_version = version
+    if args.freebsd_preview:
+        run_number, attempt = args.freebsd_preview
+        package_version = f"{version}.a{run_number}_{attempt}"
+        metadata["package_version"] = package_version
+        metadata["corresponding_source"] = f"helloneedle-{package_version}-source-{revision}.tar.gz"
+        run([sys.executable, ROOT / "tools/source_bundle.py", "--output",
+             dist.parent / "source" / metadata["corresponding_source"]], cwd=ROOT)
     metadata["application_icon"] = packaged_icons(work, prefix)
     (docs / "BUILD-ENVIRONMENT.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     if SYSTEM == "Linux":
         archive = debian(stage, bindir, dist, version)
     elif SYSTEM == "FreeBSD":
-        archive = freebsd(stage, dist, work, version)
+        archive = freebsd(stage, dist, work, package_version)
     elif SYSTEM == "Darwin":
         bundle = prefix / "Hello Needle.app"
         run(["codesign", "--force", "--sign", "-", bindir / "helloneedle-worker"])
@@ -328,6 +338,8 @@ def main():
     builder = actions.add_parser("build")
     builder.add_argument("--work", default=Path("build-qt"), type=Path)
     builder.add_argument("--output", default=Path("native-out/packages"), type=Path)
+    builder.add_argument("--freebsd-preview", nargs=2, type=int, metavar=("RUN", "ATTEMPT"),
+                         help="produce an individually versioned test package and its matching offline source")
     builder.set_defaults(func=build)
     validator = actions.add_parser("verify")
     validator.add_argument("--prefix", required=True, type=Path)
