@@ -150,6 +150,21 @@ class FivePackageTransaction(ReleaseTransaction):
 
 
 class FreeBSDTargets(unittest.TestCase):
+    def test_reusable_job_name_preserves_each_release_check(self):
+        for target in native_packages.package_targets('1.2.0'):
+            build, *checks = target.jobs
+            self.assertTrue(target.passed_required_jobs(set(target.jobs)))
+            if not target.freebsd_release:
+                self.assertFalse(target.passed_required_jobs({build + ' / other job'}))
+                continue
+            child = f'Build, install and test on FreeBSD {target.freebsd_release} amd64'
+            qualified = f'{build} / {child}'
+            self.assertTrue(target.passed_required_jobs({qualified, *checks}))
+            self.assertFalse(target.passed_required_jobs({child, *checks}))
+            self.assertFalse(target.passed_required_jobs({f'{build} / other job', *checks}))
+            if checks:
+                self.assertFalse(target.passed_required_jobs({qualified}))
+
     def test_build_receipt_and_both_pkg_manifests_match_the_target(self):
         version = '1.1.0'
         targets = [t for t in native_packages.package_targets(version) if t.freebsd_release]

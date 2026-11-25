@@ -20,6 +20,13 @@ class Package:
     jobs: tuple[str, ...]
     freebsd_release: str = ''
 
+    def passed_required_jobs(self, successful):
+        build, *install_checks = self.jobs
+        if self.freebsd_release and build not in successful:
+            # GitHub prefixes the reusable workflow's job name with its caller.
+            build = f'{build} / Build, install and test on FreeBSD {self.freebsd_release} amd64'
+        return build in successful and successful.issuperset(install_checks)
+
 
 def package_targets(version):
     # The immutable 1.0.0 release distributed one FreeBSD binary under its original name.
@@ -175,7 +182,7 @@ def add_packages(repo, run_id, revision, version, dest):
     for target in package_targets(version):
         filename = target.filename
         matches = [a for a in artifacts if a['name'] == target.artifact]
-        if not successful.issuperset(target.jobs) or len(matches) != 1 or matches[0]['expired']:
+        if not target.passed_required_jobs(successful) or len(matches) != 1 or matches[0]['expired']:
             raise ValueError(f'Missing successful native test or unique live artifact for {target.artifact}')
         item = matches[0]
         with tempfile.TemporaryDirectory(dir=dest.parent) as temp:

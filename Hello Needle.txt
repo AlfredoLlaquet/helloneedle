@@ -115,6 +115,8 @@ The successful run summary links the exact tested package, SHA-256 digest, Git c
 
 ### Native builds and stable releases
 
+During release preparation, verify the successful FreeBSD build job for each target. GitHub lists newer builds under the full native workflow’s job name followed by the reusable FreeBSD job name. Historical releases have a single job name. The 14.x package also requires its independent installation check on FreeBSD 14.5. [Native package verification](packaging/release/native_packages.py)
+
 Hello Needle builds with CMake, a C++17 toolchain for Qt 6.4 or newer, Qt Widgets and Qt SVG, and the separate Cargo lockfile under `bridge/`. CMake places the worker beside the GUI in the build and installed trees. Qt SVG renders the bundled button icons. System packages supply Qt, its native platform plugin and translations, Poppler utilities and antiword on FreeBSD and Linux. The FreeBSD pkg and Ubuntu Debian package install a native desktop entry. Uninstall them with `pkg delete helloneedle` or `apt remove helloneedle`. [Build instructions](README.md#build-from-source)
 
 Windows and macOS follow the installer model used for Crumb Writer. Windows uses a per-user Inno Setup wizard. The Start menu and optional desktop shortcut open the root launcher, which looks for the private Qt and converter binaries in `bin`. A source build can still use an MSYS2 UCRT64 installation. The installer carries the imported runtime DLLs, required Qt plugins, Spanish translation, Poppler data and antiword character maps. The uninstaller is registered with Windows. [Windows installation and verification](packaging/WINDOWS.txt) · [Installer sources](packaging/windows/)
