@@ -3,12 +3,12 @@
 #include <QImage>
 #include <QJsonObject>
 #include <QWidget>
+#include <optional>
 
 class QProcess;
 class QLabel;
 class QScrollArea;
 class QToolButton;
-class QShowEvent;
 
 namespace hn {
 class PdfPane : public QWidget {
@@ -23,8 +23,10 @@ protected:
 private:
     void goTo(int page);
     void draw(bool centerMatch);
+    void centerPendingMatch();
     void cancel();
-    QString file;
+    QString zoomFile;
+    std::optional<QPoint> pendingCenter;
     QJsonObject hit;
     QJsonObject spot;
     QImage raster;

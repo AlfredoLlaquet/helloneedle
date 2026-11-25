@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Buffered decoding shared by search and seekable source previews.
 
+use super::word_hyphens::WordHyphens;
 use super::{units, Position};
+use crate::documents::encoding::{binary_controls, marked, windows_controls};
 use anyhow::{ensure, Context, Result};
 use encoding_rs::{DecoderResult, Encoding, UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1252};
 use std::fmt;
@@ -41,29 +43,28 @@ pub(super) fn byte_len(encoding: Charset, text: &str, utf16: usize) -> u64 {
     }
 }
 
-fn forbidden(bytes: &[u8], html: bool) -> bool {
+fn forbidden(bytes: &[u8], html: bool, word_export: bool) -> bool {
     if html {
         bytes.contains(&0)
     } else {
-        super::super::has_binary_controls(bytes)
+        binary_controls(bytes, word_export)
     }
-}
-
-fn windows_controls(bytes: &[u8]) -> bool {
-    bytes
-        .iter()
-        .any(|b| matches!(b, 0x7f | 0x81 | 0x8d | 0x8f | 0x90 | 0x9d))
 }
 
 /// Until the first non-ASCII byte, UTF-8 and Windows-1252 yield identical searchable text,
 /// offsets and source positions. Resolve the ambiguity once, without retaining the file or
 /// exposing matches under a tentative decoding. Pure ASCII files use one sequential pass.
-fn unmarked_charset(first: &[u8], file: &mut File, html: bool) -> Result<&'static Encoding> {
+fn unmarked_charset(
+    first: &[u8],
+    file: &mut File,
+    html: bool,
+    word_export: bool,
+) -> Result<&'static Encoding> {
     let resume = file.stream_position()?;
     let mut remainder = Vec::with_capacity(BUFFER + 3);
     remainder.extend_from_slice(first);
     let encoding = loop {
-        if forbidden(&remainder, html) {
+        if forbidden(&remainder, html, word_export) {
             return Err(NotText.into());
         }
         let tail = match std::str::from_utf8(&remainder) {
@@ -73,12 +74,13 @@ fn unmarked_charset(first: &[u8], file: &mut File, html: bool) -> Result<&'stati
         };
         // A byte which could only be an unwanted control in Windows-1252 resolves the
         // ambiguity immediately. The UTF-8 decoder continues to validate later input.
-        if !html && windows_controls(&remainder) {
+        if windows_controls(&remainder) {
             break UTF_8;
         }
         let end = remainder.len();
         remainder.copy_within(end - tail..end, 0);
         remainder.resize(BUFFER + tail, 0);
+        crate::search::checkpoint()?;
         let n = file.read(&mut remainder[tail..])?;
         if n == 0 {
             break if tail == 0 { UTF_8 } else { WINDOWS_1252 };
@@ -91,22 +93,10 @@ fn unmarked_charset(first: &[u8], file: &mut File, html: bool) -> Result<&'stati
 
 fn initial_charset(file: &mut File, html: bool) -> Result<(Charset, u64)> {
     let mut head = Vec::with_capacity(1024);
+    crate::search::checkpoint()?;
     file.by_ref().take(1024).read_to_end(&mut head)?;
-    if let Some((encoding, n)) = Encoding::for_bom(&head) {
-        return Ok((Some(encoding), n as u64));
-    }
-    let encoding = if html {
-        super::super::markup::declared_encoding(&head).map(|encoding| {
-            if encoding == UTF_16BE || encoding == UTF_16LE {
-                UTF_8
-            } else {
-                encoding
-            }
-        })
-    } else {
-        None
-    };
-    Ok((encoding, 0))
+    let (encoding, skip) = marked(&head, html);
+    Ok((encoding, skip as u64))
 }
 
 /// CR, LF and CRLF each finish one physical line, including between two decode buffers.
@@ -163,19 +153,22 @@ pub(super) fn walk(
 ) -> Result<()> {
     let mut file = File::open(path).context("read: could not open text source")?;
     let size = file.metadata()?.len();
-    let (mut encoding, mut position) = match seek {
-        Some((position, encoding)) => (encoding, position),
-        None => {
-            let (encoding, byte) = initial_charset(&mut file, html)?;
-            (
-                encoding,
-                Position {
-                    byte,
-                    ..Default::default()
-                },
-            )
-        }
+    // A preview of declared Windows-1252 HTML must preserve its control
+    // characters. Read the short marker again only if its provenance matters.
+    let (marked, skip) = if seek.is_none()
+        || (html && seek.is_some_and(|(_, encoding)| encoding == Some(WINDOWS_1252)))
+    {
+        initial_charset(&mut file, html)?
+    } else {
+        (None, 0)
     };
+    let (mut position, mut encoding) = seek.unwrap_or((
+        Position {
+            byte: skip,
+            ..Default::default()
+        },
+        marked,
+    ));
     ensure!(
         position.byte <= size,
         "location: position is outside the source file"
@@ -187,34 +180,53 @@ pub(super) fn walk(
         emitted: false,
     };
     let capacity = size.saturating_sub(position.byte).clamp(1, BUFFER as u64) as usize;
+    let word_export = !html
+        && path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
+    let mut hyphens = word_export.then(|| WordHyphens::new(position.column > 0));
+    let mut feed = |text: &str, encoding: Charset| {
+        let mut next = |text: &str| lines.chunk(text, encoding, &mut visit);
+        match &mut hyphens {
+            Some(hyphens) => hyphens.chunk(text, next),
+            None => next(text),
+        }
+    };
     let mut raw = vec![0; capacity];
     let mut decoded = String::new();
     let mut decoder = encoding.map(|e| e.new_decoder_without_bom_handling());
     loop {
+        crate::search::checkpoint()?;
         let n = file
             .read(&mut raw)
             .context("read: could not read text source")?;
         let mut input = &raw[..n];
         if encoding.is_none() {
-            if forbidden(input, html) {
+            if forbidden(input, html, word_export) {
                 return Err(NotText.into());
             }
             if input.is_ascii() {
                 if n == 0 {
                     break;
                 }
-                if !lines.chunk(std::str::from_utf8(input)?, None, &mut visit)? {
+                // DEL is valid UTF-8 but rules out our readable Windows-1252
+                // fallback even if the first non-ASCII byte is in a later read.
+                if input.contains(&0x7f) {
+                    encoding = Some(UTF_8);
+                    decoder = Some(UTF_8.new_decoder_without_bom_handling());
+                }
+                if !feed(std::str::from_utf8(input)?, encoding)? {
                     return Ok(());
                 }
                 continue;
             }
-            let selected = unmarked_charset(input, &mut file, html)?;
+            let selected = unmarked_charset(input, &mut file, html, word_export)?;
             encoding = Some(selected);
             decoder = Some(selected.new_decoder_without_bom_handling());
         }
         // These Windows-1252 bytes map to control characters, not printable letters. They
         // frequently occur in binary files that begin with a superficially textual header.
-        if encoding == Some(WINDOWS_1252) && !html && windows_controls(input) {
+        if encoding == Some(WINDOWS_1252) && marked.is_none() && windows_controls(input) {
             return Err(NotText.into());
         }
         let decoder = decoder.as_mut().expect("explicit encoding has a decoder");
@@ -226,11 +238,11 @@ pub(super) fn walk(
             let (status, consumed) =
                 decoder.decode_to_string_without_replacement(input, &mut decoded, n == 0);
             if matches!(status, DecoderResult::Malformed(_, _))
-                || forbidden(decoded.as_bytes(), html)
+                || forbidden(decoded.as_bytes(), html, word_export)
             {
                 return Err(NotText.into());
             }
-            if !lines.chunk(&decoded, encoding, &mut visit)? {
+            if !feed(&decoded, encoding)? {
                 return Ok(());
             }
             input = &input[consumed..];
@@ -241,6 +253,9 @@ pub(super) fn walk(
         if n == 0 {
             break;
         }
+    }
+    if let Some(hyphens) = hyphens {
+        hyphens.finish()?;
     }
     position = lines.position;
     if position.column > 0 || !lines.emitted {

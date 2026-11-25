@@ -36,6 +36,9 @@ const QHash<QByteArray, QString> &spanish()
         {"License files", "Archivos de licencia"}, {"License text", "Texto de la licencia"}, {"Licenses", "Licencias"},
         {"Loading page…", "Cargando página…"}, {"Loading preview…", "Cargando vista previa…"},
         {"Next", "Siguiente"}, {"Next page", "Página siguiente"},
+        {"Next document", "Documento siguiente"}, {"Next match", "Coincidencia siguiente"},
+        {"Previous match", "Coincidencia anterior"}, {"Previous document", "Documento anterior"},
+        {"%1 or %2", "%1 o %2"},
         {"Open TheCrumbs.org in your browser", "Abrir TheCrumbs.org en tu navegador"},
         {"Open original", "Abrir original"}, {"Open this file in its usual application.", "Abrir el archivo en su aplicación habitual."},
         {"Options", "Opciones"}, {"PDF page rendering requires Poppler (pdftoppm).", "La vista de páginas PDF requiere Poppler (pdftoppm)."},
@@ -77,7 +80,14 @@ const QHash<QByteArray, QString> &spanish()
         {"The PDF has no searchable text layer.", "El PDF carece de una capa de texto que permita búsquedas."},
         {"The text encoding is unsupported.", "La codificación del texto no es compatible."},
         {"The document could not be decoded.", "No se ha podido interpretar el documento."},
-        {"Select folder", "Seleccionar carpeta"}, {"Look in:", "Buscar en:"}, {"Folder:", "Carpeta:"}
+        {"Select folder", "Seleccionar carpeta"}, {"Look in:", "Buscar en:"}, {"Folder:", "Carpeta:"},
+        {"Settings…", "Preferencias…"}, {"Settings", "Preferencias"},
+        {"Performance", "Rendimiento"}, {"Advanced", "Opciones avanzadas"},
+        {"Search workers", "Hilos de búsqueda"}, {"Automatic (1 worker)", "Automático (1 hilo)"},
+        {"Automatic (%1 workers)", "Automático (%1 hilos)"}, {"Automatic (%1)", "Automático (%1)"},
+        {"Simultaneous PDF conversions", "Conversiones simultáneas de PDF"},
+        {"Each PDF conversion uses one search worker.", "Cada conversión de PDF ocupa un hilo de búsqueda."},
+        {"Changes apply to the next search.", "Los cambios se aplican a la próxima búsqueda."}
     };
     return strings;
 }

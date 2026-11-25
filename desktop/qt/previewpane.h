@@ -7,10 +7,10 @@
 class QLabel;
 class QPushButton;
 class QStackedWidget;
-class QTextBrowser;
 
 namespace hn {
 class PdfPane;
+class PreviewText;
 class PreviewPane : public QWidget {
 public:
     explicit PreviewPane(QWidget *parent = nullptr);
@@ -30,7 +30,7 @@ private:
     QPushButton *open;
     QPushButton *toggle;
     QStackedWidget *stack;
-    QTextBrowser *text;
+    PreviewText *text;
     PdfPane *pdf;
     bool hasPdf = false;
     bool received = false;

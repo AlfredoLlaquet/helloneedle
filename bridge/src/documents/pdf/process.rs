@@ -127,6 +127,7 @@ enum Finish {
 enum Completion {
     Exited(ExitStatus),
     TimedOut,
+    Interrupted,
     Stopped,
 }
 
@@ -134,6 +135,7 @@ fn monitor(
     mut child: Child,
     activity: &Activity,
     finish: Receiver<Finish>,
+    cancel: Option<&crate::search::FileCancellation>,
 ) -> io::Result<Completion> {
     loop {
         if let Some(status) = child.try_wait()? {
@@ -142,6 +144,9 @@ fn monitor(
         let completion = match finish.recv_timeout(Duration::from_millis(100)) {
             Ok(Finish::Stop) | Err(RecvTimeoutError::Disconnected) => Completion::Stopped,
             Ok(Finish::Wait) => continue,
+            Err(RecvTimeoutError::Timeout) if cancel.is_some_and(|t| t.stopped()) => {
+                Completion::Interrupted
+            }
             Err(RecvTimeoutError::Timeout) if activity.timed_out() => Completion::TimedOut,
             Err(RecvTimeoutError::Timeout) => continue,
         };
@@ -199,9 +204,10 @@ fn run_with_idle(
         since: AtomicU64::new(0),
         idle,
     };
+    let cancel = crate::search::cancellation();
     thread::scope(|scope| {
         let (sender, receiver) = mpsc::channel();
-        let waiter = scope.spawn(|| monitor(child, &activity, receiver));
+        let waiter = scope.spawn(|| monitor(child, &activity, receiver, cancel.as_deref()));
         let diagnostic = scope.spawn(|| diagnostics(stderr));
         let mut reader = BufReader::with_capacity(
             64 * 1024,
@@ -231,6 +237,7 @@ fn run_with_idle(
             return Ok(());
         }
         match completed {
+            Completion::Interrupted => Err(anyhow!("search interrupted")),
             Completion::TimedOut => Err(anyhow!(
                 "resource_limit: PDF helper made no progress for {} seconds. {diagnostic}",
                 idle.as_secs()

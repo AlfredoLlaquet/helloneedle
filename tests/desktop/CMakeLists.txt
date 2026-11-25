@@ -1,7 +1,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-add_executable(helloneedle-gui-tests gui_tests.cpp gui_appearance.cpp gui_icon.cpp gui_capture.cpp)
+add_executable(helloneedle-gui-tests gui_tests.cpp gui_appearance.cpp gui_icon.cpp gui_capture.cpp gui_search_stream.cpp)
 set_target_properties(helloneedle-gui-tests PROPERTIES AUTOMOC ON)
 target_compile_features(helloneedle-gui-tests PRIVATE cxx_std_17)
 target_link_libraries(helloneedle-gui-tests PRIVATE helloneedle-desktop Qt6::Test)

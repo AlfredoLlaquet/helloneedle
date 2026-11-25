@@ -330,12 +330,15 @@ dependencies = [
  "html5ever",
  "html5gum",
  "ignore",
+ "libc",
  "pulldown-cmark",
  "quick-xml",
+ "regex-syntax",
  "roxmltree",
  "scraper",
  "serde",
  "serde_json",
+ "windows-sys",
  "zip",
 ]
 

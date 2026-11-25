@@ -2,7 +2,9 @@
 #include "workerclient.h"
 #include "language.h"
 #include "runtime.h"
+#include <QElapsedTimer>
 #include <QJsonDocument>
+#include <QPointer>
 #include <QProcess>
 #include <QTimer>
 #ifdef Q_OS_UNIX
@@ -35,6 +37,10 @@ void WorkerClient::stop()
     if (processTree) { CloseHandle(processTree); processTree = nullptr; }
 #endif
     pending.clear();
+    scannedPrefix = 0;
+    readQueued = false;
+    exited = false;
+    exitError.clear();
     onEvent = {};
     onFinished = {};
 }
@@ -46,17 +52,34 @@ void WorkerClient::finish(const QString &error)
     if (callback) callback(error);
 }
 
-void WorkerClient::consume(bool final)
+void WorkerClient::scheduleRead()
 {
-    if (!process) return;
-    pending += process->readAllStandardOutput();
+    if (!process || readQueued) return;
+    readQueued = true;
+    QTimer::singleShot(0, this, [this, job = QPointer<QProcess>(process)] {
+        if (!job || process != job.data()) return;
+        readQueued = false;
+        consume();
+    });
+}
+
+void WorkerClient::consume()
+{
+    auto *job = process;
+    pending += job->readAllStandardOutput();
     // Each event is a single frame. Bound a malformed or unexpectedly large
     // response without retaining a growing pipe between searches.
     constexpr qsizetype limit = 64 * 1024 * 1024;
+    QElapsedTimer slice;
+    slice.start();
     qsizetype pos = 0;
-    while (process && pos < pending.size()) {
-        qsizetype end = pending.indexOf('\n', pos);
-        if (end < 0 && !final && pending.size() - pos <= limit) break;
+    while (pos < pending.size()) {
+        qsizetype end = pending.indexOf('\n', qMax(pos, scannedPrefix));
+        if (end < 0 && !exited && pending.size() - pos <= limit) {
+            scannedPrefix = pending.size() - pos;
+            break;
+        }
+        scannedPrefix = 0;
         if (end < 0) end = pending.size();
         if (end - pos > limit) { finish(ui("The worker response is too large.")); return; }
         const auto line = pending.mid(pos, end - pos).trimmed();
@@ -65,8 +88,20 @@ void WorkerClient::consume(bool final)
         const auto json = QJsonDocument::fromJson(line);
         if (!json.isObject()) { finish(ui("The worker returned an unreadable response.")); return; }
         if (onEvent) onEvent(json.object());
+        if (process != job) return;
+        // A burst of hits from several readers must leave the GUI time to handle
+        // navigation, previews and Cancel before inserting the next group of rows.
+        if (slice.elapsed() >= 6 && pos < pending.size()) {
+            pending.remove(0, pos);
+            scheduleRead();
+            return;
+        }
     }
     pending.remove(0, pos);
+    if (exited) {
+        const QString error = exitError;
+        finish(error);
+    }
 }
 
 void WorkerClient::start(const QString &command, const QJsonObject &request, Event event, Finished finished)
@@ -106,7 +141,7 @@ void WorkerClient::start(const QString &command, const QJsonObject &request, Eve
         job->closeWriteChannel();
     });
     connect(job, &QProcess::readyReadStandardOutput, this, [this, job] {
-        if (process == job) consume(false);
+        if (process == job) scheduleRead();
     });
     connect(job, &QProcess::errorOccurred, this, [this, job](QProcess::ProcessError error) {
         if (process == job && error == QProcess::FailedToStart)
@@ -114,9 +149,9 @@ void WorkerClient::start(const QString &command, const QJsonObject &request, Eve
     });
     connect(job, &QProcess::finished, this, [this, job](int code, QProcess::ExitStatus status) {
         if (process != job) return;
-        consume(true);
-        if (process == job) finish(status == QProcess::NormalExit && code == 0
-                          ? QString() : ui("The search worker stopped unexpectedly."));
+        exited = true;
+        if (status != QProcess::NormalExit || code != 0) exitError = ui("The search worker stopped unexpectedly.");
+        scheduleRead();
     });
     job->start(program, {command});
 }

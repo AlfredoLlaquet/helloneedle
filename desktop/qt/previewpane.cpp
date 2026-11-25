@@ -11,10 +11,13 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTextDocumentFragment>
+#include <QTextFrame>
 #include <QTextLayout>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QtMath>
@@ -70,15 +73,64 @@ private:
         layout.endLayout();
     }
 };
-
-class LocalPreview final : public QTextBrowser {
-public:
-    using QTextBrowser::QTextBrowser;
-    QVariant loadResource(int, const QUrl &) override { return {}; }
-};
 }
 
 namespace hn {
+class PreviewText final : public QTextBrowser {
+public:
+    using QTextBrowser::QTextBrowser;
+    QVariant loadResource(int, const QUrl &) override { return {}; }
+
+    void clearPreview()
+    {
+        pendingPosition = -1;
+        clear();
+        setExtraSelections({});
+    }
+
+    void centerMatch(int position)
+    {
+        pendingPosition = position;
+        if (isVisible()) QTimer::singleShot(0, this, &PreviewText::centerPendingMatch);
+    }
+
+protected:
+    void showEvent(QShowEvent *event) override
+    {
+        QTextBrowser::showEvent(event);
+        // PDF text may be prepared while its page view is showing.
+        if (pendingPosition >= 0) centerMatch(pendingPosition);
+    }
+
+private:
+    int pendingPosition = -1;
+
+    void centerPendingMatch()
+    {
+        if (pendingPosition < 0 || !isVisible()) return;
+        QTextCursor target(document());
+        target.setPosition(pendingPosition);
+        pendingPosition = -1;
+
+        auto *bar = verticalScrollBar();
+        const int middle = viewport()->rect().center().y();
+        const int lineY = bar->value() + cursorRect(target).center().y();
+        const int documentHeight = qCeil(document()->size().height());
+        const int above = qMax(0, middle - lineY);
+        const int below = qMax(0, viewport()->height() - middle - (documentHeight - lineY));
+        if (above || below) {
+            // Supply only the missing space at the document edges. Frame margins
+            // preserve the text, formatting, selection offsets and clipboard content.
+            auto *frame = document()->rootFrame();
+            auto format = frame->frameFormat();
+            format.setTopMargin(format.topMargin() + above);
+            format.setBottomMargin(format.bottomMargin() + below);
+            frame->setFrameFormat(format);
+        }
+        bar->setValue(bar->value() + cursorRect(target).center().y() - viewport()->rect().center().y());
+    }
+};
+
 PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this)
 {
     setObjectName("previewPane");
@@ -105,7 +157,7 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this)
     bar->addStretch();
     layout->addLayout(bar);
     stack = new QStackedWidget(this);
-    text = new LocalPreview(stack);
+    text = new PreviewText(stack);
     text->setObjectName("previewText");
     text->setOpenLinks(false);
     text->setOpenExternalLinks(false);
@@ -123,8 +175,7 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this)
             const int page = pdf->currentPage();
             const QJsonObject location = page == original.value("page").toInt()
                 ? original : QJsonObject{{"page", page}};
-            text->clear();
-            text->setExtraSelections({});
+            text->clearPreview();
             text->setPlaceholderText(ui("Loading preview…"));
             load(location, false);
         }
@@ -143,8 +194,7 @@ void PreviewPane::clear()
     match = {};
     open->setEnabled(false);
     toggle->hide();
-    text->clear();
-    text->setExtraSelections({});
+    text->clearPreview();
     stack->setCurrentWidget(text);
     retranslate();
 }
@@ -194,7 +244,7 @@ void PreviewPane::displayError(const QString &message)
     hasPdf = false;
     toggle->hide();
     chooseView(false);
-    text->setExtraSelections({});
+    text->clearPreview();
     text->setPlainText(message);
 }
 
@@ -226,7 +276,7 @@ void PreviewPane::load(const QJsonObject &location, bool first)
 
 void PreviewPane::present(const QJsonObject &data, bool first)
 {
-    text->clear();
+    text->clearPreview();
     text->setPlaceholderText(ui("This document contains no previewable text."));
     const QJsonArray blocks = data.value("blocks").toArray();
     const int selected = data.value("index").toInt(-1);
@@ -277,11 +327,13 @@ void PreviewPane::present(const QJsonObject &data, bool first)
         const int begin = int(qBound(qint64(0), start - offset, qint64(selectedSize)));
         const int end = int(qBound(qint64(begin), start + matchLength - offset, qint64(selectedSize)));
         const int length = end - begin;
-        QTextCursor target(text->document());
-        target.setPosition(selectedStart + (match.value("kind") == "filename" ? 0 : begin));
-        text->setTextCursor(target);
         const int originalPage = match.value("location").toObject().value("page").toInt();
-        if (length && match.value("kind") != "filename" && textPage == originalPage) {
+        const bool hasMatch = match.value("kind") != "filename" && textPage == originalPage;
+        QTextCursor target(text->document());
+        target.setPosition(selectedStart + (hasMatch ? begin : 0));
+        text->setTextCursor(target);
+        if (hasMatch) text->centerMatch(target.position());
+        if (hasMatch && length) {
             target.setPosition(selectedStart + begin + length, QTextCursor::KeepAnchor);
             QTextEdit::ExtraSelection highlight;
             highlight.cursor = target;
@@ -289,7 +341,6 @@ void PreviewPane::present(const QJsonObject &data, bool first)
             highlight.format.setForeground(text->palette().brush(QPalette::HighlightedText));
             text->setExtraSelections({highlight});
         }
-        text->ensureCursorVisible();
     }
     if (first) {
         hasPdf = kind == "pdf" && !selectedSpot.isEmpty();

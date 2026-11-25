@@ -15,6 +15,7 @@ mod package;
 mod rtf;
 #[cfg(test)]
 mod tests;
+mod xml_encoding;
 
 // Bound allocations independently of a ZIP's reported sizes and ODF's repeat counts.
 const MAX_BLOCKS: usize = 100_000;
@@ -42,7 +43,7 @@ pub fn extract(path: &Path, extension: &str) -> Result<Option<Document>> {
         "doc" => legacy::extract(path, file, &mut out)?,
         "rtf" => rtf::extract(&read_bounded(file)?, &mut out)?,
         "fodt" => odf::extract(
-            &package::decode_xml(&read_bounded(file)?)?,
+            &xml_encoding::decode(&read_bounded(file)?)?,
             None,
             &kind,
             &mut out,

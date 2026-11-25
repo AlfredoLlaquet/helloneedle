@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read the Document representation of HTML without retaining embedded resources.
-use super::markup;
+use super::{encoding, markup};
 use crate::Document;
 use anyhow::Result;
-use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_16BE, UTF_16LE, UTF_8};
+use encoding_rs::{Decoder, DecoderResult, Encoding, UTF_8, WINDOWS_1252};
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
     states::RawKind, Doctype, Tag, TagKind, Token as TreeToken, TokenSink, TokenSinkResult,
@@ -13,7 +13,7 @@ use html5ever::{Attribute, LocalName, QualName};
 use html5gum::{DefaultEmitter, Emitter, IoReader, State, Token, Tokenizer};
 use scraper::{Html, HtmlTreeSink};
 use std::cell::Cell;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 
 const DOCUMENT_MEMORY: usize = 1024 * 1024 * 1024;
 const LIMIT_MESSAGE: &str = "too_large: HTML exceeds the document memory budget";
@@ -68,9 +68,16 @@ impl Budget {
 
 // BOM and the initial HTML charset declaration are inspected before tokenization.
 // Decode a bounded buffer at a time, including encodings with state across reads.
+enum HtmlCharset {
+    Selected(&'static Encoding),
+    WindowsFallback,
+}
+
 struct Decoded<'a, R: Read> {
-    input: BufReader<io::Chain<io::Cursor<Vec<u8>>, R>>,
+    input: BufReader<R>,
     decoder: Decoder,
+    windows_fallback: bool,
+    malformed: &'a Cell<bool>,
     buffer: Box<[u8; 32 * 1024]>,
     available: std::ops::Range<usize>,
     finished: bool,
@@ -78,31 +85,21 @@ struct Decoded<'a, R: Read> {
 }
 
 impl<'a, R: Read> Decoded<'a, R> {
-    fn new(mut input: R, budget: &'a Budget) -> io::Result<Self> {
-        let mut head = Vec::with_capacity(1024);
-        input.by_ref().take(1024).read_to_end(&mut head)?;
-        let (encoding, skip) = Encoding::for_bom(&head).unwrap_or_else(|| {
-            let enc = markup::declared_encoding(&head).unwrap_or(UTF_8);
-            (
-                if enc == UTF_16LE || enc == UTF_16BE {
-                    UTF_8
-                } else {
-                    enc
-                },
-                0,
-            )
-        });
-        // Replay the prefix even for non-seekable and short-reading inputs.
-        let mut prefix = io::Cursor::new(head);
-        prefix.set_position(skip as u64);
-        Ok(Self {
-            input: BufReader::new(prefix.chain(input)),
+    fn new(input: R, charset: HtmlCharset, budget: &'a Budget, malformed: &'a Cell<bool>) -> Self {
+        let encoding = match charset {
+            HtmlCharset::Selected(enc) => enc,
+            HtmlCharset::WindowsFallback => WINDOWS_1252,
+        };
+        Self {
+            input: BufReader::with_capacity(64 * 1024, input),
+            windows_fallback: matches!(charset, HtmlCharset::WindowsFallback),
+            malformed,
             decoder: encoding.new_decoder_without_bom_handling(),
             buffer: Box::new([0; 32 * 1024]),
             available: 0..0,
             finished: false,
             budget,
-        })
+        }
     }
 }
 
@@ -110,6 +107,7 @@ impl<R: Read> Read for Decoded<'_, R> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         self.budget.check()?;
         while self.available.is_empty() && !self.finished {
+            crate::search::checkpoint()?;
             let input = self.input.fill_buf()?;
             let last = input.is_empty();
             let (status, consumed, produced) =
@@ -118,8 +116,12 @@ impl<R: Read> Read for Decoded<'_, R> {
             // Saved web pages may quote control characters in shell examples. They are
             // valid decoded characters and the HTML tokenizer can handle them. Keep
             // the existing NUL guard for binary data masquerading as HTML.
-            if matches!(status, DecoderResult::Malformed(_, _))
-                || self.buffer[..produced].contains(&0)
+            if matches!(status, DecoderResult::Malformed(_, _)) {
+                self.malformed.set(true);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, ENCODING_ERROR));
+            }
+            if self.buffer[..produced].contains(&0)
+                || (self.windows_fallback && encoding::windows_controls(&input[..consumed]))
             {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, ENCODING_ERROR));
             }
@@ -134,13 +136,41 @@ impl<R: Read> Read for Decoded<'_, R> {
     }
 }
 
-pub(super) fn read(input: impl Read) -> Result<Document> {
+pub(super) fn read(input: impl Read + Seek) -> Result<Document> {
     read_with_budget(input, DOCUMENT_MEMORY)
 }
 
-fn read_with_budget(input: impl Read, limit: usize) -> Result<Document> {
+fn read_with_budget(mut input: impl Read + Seek, limit: usize) -> Result<Document> {
+    let mut head = Vec::with_capacity(1024);
+    crate::search::checkpoint()?;
+    input.by_ref().take(1024).read_to_end(&mut head)?;
+    let (marked, skip) = encoding::marked(&head, true);
+    input.seek(SeekFrom::Start(skip as u64))?;
+    let malformed = Cell::new(false);
+    let first = read_as(
+        &mut input,
+        HtmlCharset::Selected(marked.unwrap_or(UTF_8)),
+        limit,
+        &malformed,
+    );
+    // Format projection delivers hits only after the tree has been built. If
+    // unmarked UTF-8 fails, its partial tree is already dropped and we replay
+    // the same bytes exactly once. ASCII and valid UTF-8 need no scan ahead.
+    if marked.is_none() && malformed.get() {
+        input.rewind()?;
+        return read_as(input, HtmlCharset::WindowsFallback, limit, &malformed);
+    }
+    first
+}
+
+fn read_as(
+    input: impl Read,
+    charset: HtmlCharset,
+    limit: usize,
+    malformed: &Cell<bool>,
+) -> Result<Document> {
     let budget = Budget::new(limit);
-    let input = IoReader::new(Decoded::new(input, &budget)?);
+    let input = IoReader::new(Decoded::new(input, charset, &budget, malformed));
     let tree = TreeBuilder::new(HtmlTreeSink::new(Html::new_document()), Default::default());
     let context = Context::default();
     let emitter = Filter::new(&budget, &context);
@@ -532,7 +562,7 @@ mod tests {
     use super::*;
 
     fn paragraphs(html: &[u8], budget: usize) -> Vec<String> {
-        read_with_budget(html, budget)
+        read_with_budget(io::Cursor::new(html), budget)
             .unwrap()
             .blocks
             .into_iter()
@@ -573,7 +603,7 @@ mod tests {
             "<p><strong>í 😀</strong><br>final</p>",
         ] {
             let baseline = serde_json::to_value(markup::project(s,false).unwrap()).unwrap();
-            let streamed = serde_json::to_value(read(s.as_bytes()).unwrap().blocks).unwrap();
+            let streamed = serde_json::to_value(read(io::Cursor::new(s)).unwrap().blocks).unwrap();
             assert_eq!(baseline, streamed, "{s}");
         }
     }
@@ -598,12 +628,29 @@ mod tests {
             }
             assert_eq!(paragraphs(&bytes, 32_768), ["café 😀"]);
             bytes.pop();
-            assert!(read(bytes.as_slice())
+            assert!(read(io::Cursor::new(bytes.as_slice()))
                 .unwrap_err()
                 .to_string()
                 .contains("unsupported_encoding"));
         }
-        assert!(read(b"<p>x\0y</p>".as_slice()).is_err());
+        assert!(read(io::Cursor::new(b"<p>x\0y</p>")).is_err());
+    }
+
+    #[test]
+    fn unmarked_legacy_html_replays_prior_text_but_marked_utf8_stays_strict() {
+        let mut bytes = b"<p>\xc3\xa9</p><!--".to_vec();
+        bytes.resize(100_000, b' ');
+        bytes.extend_from_slice(b"--><p>\x93Caf\xe9\x94</p>");
+        assert_eq!(paragraphs(&bytes, 32_768), ["Ã©", "“Café”"]);
+        for prefix in [b"<meta charset=utf-8>".as_slice(), b"\xef\xbb\xbf"] {
+            let marked = [prefix, &bytes].concat();
+            assert!(read(io::Cursor::new(marked)).is_err());
+        }
+        assert!(read(io::Cursor::new(b"<p>\xff\x81</p>")).is_err());
+        assert_eq!(
+            paragraphs(b"<meta charset=windows-1252><p>\x81\xea</p>", 32_768),
+            ["\u{81}ê"]
+        );
     }
 
     #[test]
@@ -619,7 +666,7 @@ mod tests {
     fn charges_retained_comment_and_empty_element_nodes() {
         for token in ["<!-- -->", "<i></i>", "</br>"] {
             let html = token.repeat(512);
-            assert!(read_with_budget(html.as_bytes(), 32 * 1024)
+            assert!(read_with_budget(io::Cursor::new(html), 32 * 1024)
                 .unwrap_err()
                 .to_string()
                 .contains("too_large"));
@@ -629,10 +676,16 @@ mod tests {
     #[test]
     fn stops_reading_a_text_only_file_as_soon_as_the_budget_is_exceeded() {
         let mut input = io::repeat(b'x').take(1_000_000_000_000);
-        let error = read_with_budget(&mut input, 256 * 1024).unwrap_err();
+        let error = read_as(
+            &mut input,
+            HtmlCharset::Selected(UTF_8),
+            256 * 1024,
+            &Cell::new(false),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("too_large"));
         let bytes_read = 1_000_000_000_000 - input.limit();
         assert!((1..160 * 1024).contains(&bytes_read), "{bytes_read}");
-        assert!(read_with_budget("<p>text</p>".repeat(400).as_bytes(), 32 * 1024).is_err());
+        assert!(read_with_budget(io::Cursor::new("<p>text</p>".repeat(400)), 32 * 1024).is_err());
     }
 }

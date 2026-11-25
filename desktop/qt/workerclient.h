@@ -17,13 +17,18 @@ public:
     void stop();
 
 private:
-    void consume(bool final);
+    void scheduleRead();
+    void consume();
     void finish(const QString &error);
     QProcess *process = nullptr;
 #ifdef Q_OS_WIN
     void *processTree = nullptr;
 #endif
     QByteArray pending;
+    qsizetype scannedPrefix = 0;
+    QString exitError;
+    bool readQueued = false;
+    bool exited = false;
     Event onEvent;
     Finished onFinished;
 };

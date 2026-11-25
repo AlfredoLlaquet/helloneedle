@@ -9,10 +9,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 
 from document_fixtures import write_documents
+from parallel_checks import verify_parallel
 from pdf_checks import verify_pdf_streaming
+from search_benchmark import benchmark
 
 
 def exchange(executable, operation, payload, allow_errors=False, env=None):
@@ -26,9 +29,7 @@ def exchange(executable, operation, payload, allow_errors=False, env=None):
     return events
 
 
-def search(executable, folder, query, *, allow_errors=False, **options):
-    payload = {"folder": str(folder), "query": query, "mode": "document", **options}
-    events = exchange(executable, "search", payload, allow_errors)
+def retained_matches(events):
     matches = []
     for event in events:
         if event["type"] == "match":
@@ -37,6 +38,13 @@ def search(executable, folder, query, *, allow_errors=False, **options):
             identity = event.get("pathBytes", event["path"])
             matches = [hit for hit in matches
                        if hit.get("pathBytes", hit["path"]) != identity or hit["kind"] == "filename"]
+    return matches
+
+
+def search(executable, folder, query, *, allow_errors=False, **options):
+    payload = {"folder": str(folder), "query": query, "mode": "document", **options}
+    events = exchange(executable, "search", payload, allow_errors)
+    matches = retained_matches(events)
     if not allow_errors:
         assert events[-1]["type"] == "done" and events[-1]["count"] == len(matches), events[-1]
     return matches, [event for event in events if event["type"] == "error"]
@@ -283,6 +291,9 @@ def main():
         verify_large_html(worker, root / "large markup")
         verify_options_and_recovery(worker, root / "search controls")
         verify_native_names(worker, root / "native names")
+        verify_parallel(worker, root / "parallel", exchange, retained_matches)
+        if sys.platform.startswith("freebsd"):
+            benchmark(worker, root / "benchmark")
 
 
 if __name__ == "__main__":

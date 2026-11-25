@@ -14,6 +14,10 @@ pub(crate) struct SearchRequest {
     #[serde(default)]
     pub folder: String,
     pub folder_bytes: Option<String>,
+    #[serde(default)]
+    pub search_workers: usize,
+    #[serde(default)]
+    pub pdf_conversions: usize,
     pub query: String,
     #[serde(default)]
     pub regex: bool,
@@ -66,6 +70,15 @@ pub(crate) struct Emitter<W> {
 impl<W: Write> Emitter<W> {
     pub fn send<T: Serialize>(&mut self, event: &T) -> io::Result<()> {
         serde_json::to_writer(&mut self.writer, event)?;
+        self.end_line()
+    }
+
+    pub fn send_serialized(&mut self, event: &[u8]) -> io::Result<()> {
+        self.writer.write_all(event)?;
+        self.end_line()
+    }
+
+    fn end_line(&mut self) -> io::Result<()> {
         self.writer.write_all(b"\n")?;
         self.writer.flush()
     }

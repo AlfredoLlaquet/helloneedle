@@ -135,6 +135,41 @@ fn odt_and_utf16_fodt_keep_headings_cell_and_whitespace_across_spans() {
 }
 
 #[test]
+fn flat_and_packaged_opendocument_use_declared_xml_encoding() {
+    for (flat, extension) in [(true, "fodt"), (false, "odt")] {
+        let content = odf(
+            "<office:text><text:p>legacy</text:p></office:text>",
+            "",
+            flat,
+        );
+        let source = format!("<?xml version='1.0' encoding='Windows-1252'?>{content}");
+        let (before, after) = source.split_once("legacy").unwrap();
+        let raw = [before.as_bytes(), b"\x93Caf\xe9\x94", after.as_bytes()].concat();
+        let bytes = if flat {
+            raw
+        } else {
+            let mut package = ZipWriter::new(Cursor::new(Vec::new()));
+            package
+                .start_file("content.xml", SimpleFileOptions::default())
+                .unwrap();
+            package.write_all(&raw).unwrap();
+            package.finish().unwrap().into_inner()
+        };
+        assert_eq!(texts(&read(extension, &bytes).unwrap()), ["“Café”"]);
+    }
+    let xml = xml_encoding::decode;
+    assert!(xml(b"<p>\xf1</p>").is_err());
+    assert!(xml(b"\xef\xbb\xbf<?xml version='1.0' encoding='windows-1252'?><p/>").is_err());
+    assert!(xml(b"<?xml version='1.0' encoding='us-ascii'?><p>\xf1</p>").is_err());
+    assert!(xml(b"<?xml version='1.0' encoding='unknown-12'?><p/>").is_err());
+    assert!(xml(b"<?xml version='1.0' encoding='utf-16'?><p/>").is_err());
+    let latin = xml(b"<?xml version='1.0' encoding='ISO-8859-1'?><p>\x80\xe1</p>").unwrap();
+    assert!(latin.contains("\u{80}á"));
+    let windows = xml(b"<?xml version='1.0' encoding='Cp1252'?><p>\x80\xe1</p>").unwrap();
+    assert!(windows.contains("€á"));
+}
+
+#[test]
 fn xlsx_uses_relationship_and_sheet_order_and_only_cached_visible_values() {
     let book = format!(
         r#"<workbook xmlns="{SHEET}" xmlns:r="{OFFICE_REL}"><sheets><sheet name="Data" sheetId="6" r:id="last"/><sheet name="Archive" sheetId="2" r:id="first"/></sheets></workbook>"#

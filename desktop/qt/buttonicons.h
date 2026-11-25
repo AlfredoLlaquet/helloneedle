@@ -4,6 +4,9 @@
 class QAbstractButton;
 
 namespace hn {
-enum class ButtonIcon { Browse, Search, Cancel, Options, Details, OpenOriginal };
+enum class ButtonIcon {
+    Browse, Search, Cancel, Options, Details, OpenOriginal,
+    NextDocument, NextMatch, PreviousMatch, PreviousDocument
+};
 void setButtonIcon(QAbstractButton *button, ButtonIcon icon);
 }

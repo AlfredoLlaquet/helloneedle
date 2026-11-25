@@ -10,6 +10,8 @@
 #include <QPainter>
 #include <QProcess>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -97,7 +99,7 @@ void PdfPane::cancel()
 void PdfPane::clear()
 {
     cancel();
-    file.clear();
+    pendingCenter.reset();
     hit = {};
     spot = {};
     raster = {};
@@ -110,11 +112,14 @@ void PdfPane::open(const QJsonObject &match, const QJsonObject &location)
     clear();
     hit = match;
     spot = location;
-    file = match.value("path").toString();
     const int selected = qMax(1, location.value("page").toInt(1));
     pages = qMax(selected, location.value("pageCount").toInt(selected));
-    zoom = 1;
-    fitToPage = true;
+    const QString identity = match.value("pathBytes").toString(match.value("path").toString());
+    if (identity != zoomFile) {
+        zoomFile = identity;
+        zoom = 1;
+        fitToPage = true;
+    }
     goTo(selected);
 }
 
@@ -122,6 +127,7 @@ void PdfPane::goTo(int target)
 {
     if (target < 1 || target > pages) return;
     cancel();
+    pendingCenter.reset();
     page = target;
     raster = {};
     image->clear();
@@ -139,6 +145,7 @@ void PdfPane::goTo(int target)
     job = p;
     configurePdfRenderer(*p, program);
     p->setStandardErrorFile(QProcess::nullDevice());
+    const QString file = hit.value("path").toString();
     QString argument = file;
 #ifdef Q_OS_UNIX
     const auto native = QByteArray::fromBase64(hit.value("pathBytes").toString().toLatin1());
@@ -208,15 +215,35 @@ void PdfPane::draw(bool centerMatch)
     pixmap.setDevicePixelRatio(dpr);
     image->setPixmap(pixmap);
     image->resize(size);
-    if (centerMatch && !selection.isEmpty())
-        scroller->ensureVisible(qRound(selection.center().x()*size.width()/raster.width()),
-                                qRound(selection.center().y()*size.height()/raster.height()), 48, 36);
+    if (centerMatch) {
+        pendingCenter.reset();
+        if (!fitToPage && !selection.isEmpty()) {
+            pendingCenter = QPoint(qRound(selection.center().x() * size.width() / raster.width()),
+                                   qRound(selection.center().y() * size.height() / raster.height()));
+            // Let Qt settle both scroll ranges after the raster changes size.
+            QTimer::singleShot(0, this, &PdfPane::centerPendingMatch);
+        }
+    }
+}
+
+void PdfPane::centerPendingMatch()
+{
+    if (!pendingCenter || !scroller->isVisible()) return;
+    auto *viewport = scroller->viewport();
+    const QPoint offset = image->mapTo(viewport, *pendingCenter) - viewport->rect().center();
+    pendingCenter.reset();
+    auto *horizontal = scroller->horizontalScrollBar();
+    auto *vertical = scroller->verticalScrollBar();
+    horizontal->setValue(horizontal->value() + offset.x());
+    vertical->setValue(vertical->value() + offset.y());
 }
 
 bool PdfPane::eventFilter(QObject *object, QEvent *event)
 {
     if (object == scroller->viewport() && event->type() == QEvent::Resize && fitToPage)
         draw(false);
+    if (object == scroller->viewport() && event->type() == QEvent::Show && pendingCenter)
+        QTimer::singleShot(0, this, &PdfPane::centerPendingMatch);
     return QWidget::eventFilter(object, event);
 }
 }

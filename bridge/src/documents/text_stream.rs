@@ -4,6 +4,7 @@
 mod source;
 #[cfg(test)]
 mod tests;
+mod word_hyphens;
 
 use self::source::{byte_len, can_seek, utf16_left, Charset, NotText, BUFFER};
 use crate::Block;

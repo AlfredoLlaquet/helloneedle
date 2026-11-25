@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Readers whose natural locations are source lines, document blocks, or PDF pages.
 
+mod encoding;
 mod html;
 mod markup;
 pub(crate) mod pdf;
@@ -40,56 +41,56 @@ pub(crate) fn read_markdown(path: &Path) -> Result<Document> {
 }
 
 fn decode_text(bytes: &[u8]) -> Result<Option<std::borrow::Cow<'_, str>>> {
+    use encoding_rs::{DecoderResult, UTF_8, WINDOWS_1252};
     use std::borrow::Cow;
-    let little_endian = bytes.starts_with(&[0xff, 0xfe]);
-    let text = if little_endian || bytes.starts_with(&[0xfe, 0xff]) {
-        let bytes = &bytes[2..];
-        if bytes.len() % 2 != 0 {
-            return Ok(None);
-        }
-        let units = bytes.chunks_exact(2).map(|pair| {
-            let raw = [pair[0], pair[1]];
-            if little_endian {
-                u16::from_le_bytes(raw)
-            } else {
-                u16::from_be_bytes(raw)
-            }
-        });
-        let mut output = String::new();
-        for scalar in char::decode_utf16(units) {
-            let Ok(scalar) = scalar else {
-                return Ok(None);
-            };
-            output.push(scalar);
+
+    let (marked, skip) = encoding::marked(bytes, false);
+    let bytes = &bytes[skip..];
+    let encoding = marked.unwrap_or(UTF_8);
+    if encoding == UTF_8 {
+        if let Ok(text) = std::str::from_utf8(bytes) {
             ensure!(
-                output.len() <= MAX_TEXT_BYTES,
+                text.len() <= MAX_TEXT_BYTES,
                 "too_large: decoded text exceeds limit"
             );
+            return Ok(
+                (!encoding::binary_controls(text.as_bytes(), false)).then_some(Cow::Borrowed(text))
+            );
         }
-        Cow::Owned(output)
-    } else {
-        let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-        let Ok(utf8) = std::str::from_utf8(bytes) else {
+        if marked.is_some() || encoding::windows_controls(bytes) {
             return Ok(None);
-        };
+        }
+    }
+    // The limit counts decoded UTF-8 bytes. Check it as the output grows,
+    // including when a single-byte source expands to three bytes per character.
+    let mut decoder = marked
+        .unwrap_or(WINDOWS_1252)
+        .new_decoder_without_bom_handling();
+    let mut input = bytes;
+    let mut output = String::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let (status, consumed, produced) =
+            decoder.decode_to_utf8_without_replacement(input, &mut buffer, true);
+        if matches!(status, DecoderResult::Malformed(_, _)) {
+            return Ok(None);
+        }
         ensure!(
-            utf8.len() <= MAX_TEXT_BYTES,
+            output.len() + produced <= MAX_TEXT_BYTES,
             "too_large: decoded text exceeds limit"
         );
-        Cow::Borrowed(utf8)
-    };
+        output.push_str(std::str::from_utf8(&buffer[..produced])?);
+        input = &input[consumed..];
+        if status == DecoderResult::InputEmpty {
+            break;
+        }
+    }
+    let text = Cow::Owned::<str>(output);
     // ZIPs, binaries filled with NULs, and small binary files can be valid UTF-8.
-    if has_binary_controls(text.as_bytes()) {
+    if encoding::binary_controls(text.as_bytes(), false) {
         return Ok(None);
     }
     Ok(Some(text))
-}
-
-fn has_binary_controls(bytes: &[u8]) -> bool {
-    bytes
-        .iter()
-        .copied()
-        .any(|b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0c))
 }
 
 #[cfg(test)]
@@ -118,6 +119,20 @@ mod tests {
     }
 
     #[test]
+    fn markdown_uses_readable_windows_1252_only_when_unmarked() {
+        assert_eq!(
+            decode_text(b"**\x93Caf\xe9\x94**").unwrap().as_deref(),
+            Some("**“Café”**")
+        );
+        assert_eq!(
+            decode_text("niñez".as_bytes()).unwrap().as_deref(),
+            Some("niñez")
+        );
+        assert!(decode_text(b"\xef\xbb\xbfNi\xf1ez").unwrap().is_none());
+        assert!(decode_text(b"word\0\xf1").unwrap().is_none());
+    }
+
+    #[test]
     fn recognizes_both_html_charset_declarations() {
         for declaration in [
             "<meta charset='iso-8859-1'>",
@@ -125,7 +140,7 @@ mod tests {
         ] {
             let mut bytes = declaration.as_bytes().to_vec();
             bytes.extend_from_slice(b"<p>ma\xf1ana</p>");
-            let document = html::read(bytes.as_slice()).unwrap();
+            let document = html::read(std::io::Cursor::new(bytes)).unwrap();
             assert_eq!(document.blocks[0].text, "mañana");
         }
     }

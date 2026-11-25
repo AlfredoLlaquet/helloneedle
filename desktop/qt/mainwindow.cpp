@@ -3,7 +3,9 @@
 #include "buttonicons.h"
 #include "credits.h"
 #include "language.h"
+#include "performancesettings.h"
 #include "previewpane.h"
+#include "resultnavigation.h"
 #include "searchstatus.h"
 #include <QActionGroup>
 #include <QApplication>
@@ -145,6 +147,8 @@ void MainWindow::buildControls()
     results->setTextElideMode(Qt::ElideRight);
     results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     results->setMinimumSize(110, 50);
+    navigation = new ResultNavigation(results, left);
+    leftLayout->addWidget(navigation);
     leftLayout->addWidget(results);
     preview = new PreviewPane(splitter);
     splitter->addWidget(left);
@@ -186,6 +190,8 @@ void MainWindow::buildMenus()
     folderAction->setShortcut(QKeySequence::Open);
     openAction = action(fileMenu, "openAction", [this]{ preview->openOriginal(); });
     openAction->setEnabled(false);
+    settingsAction = action(fileMenu, "settingsAction", [this]{ showPerformanceSettings(this); });
+    settingsAction->setMenuRole(QAction::NoRole);
     fileMenu->addSeparator();
     quitAction = action(fileMenu, "quitAction", [this]{ close(); });
     quitAction->setShortcut(QKeySequence::Quit);
@@ -306,6 +312,7 @@ void MainWindow::retranslate()
     patternEdit->setPlaceholderText(ui("For example, *.md"));
     resultsLabel->setText(ui("Results"));
     results->setAccessibleName(ui("Search results"));
+    navigation->retranslate();
     status->retranslate();
     fileMenu->setTitle(ui("&File"));
     searchMenu->setTitle(ui("&Search"));
@@ -313,6 +320,7 @@ void MainWindow::retranslate()
     helpMenu->setTitle(ui("&Help"));
     folderAction->setText(ui("Choose folder…"));
     openAction->setText(ui("Open original"));
+    settingsAction->setText(ui("Settings…"));
     quitAction->setText(ui("Quit"));
     focusAction->setText(ui("Focus search field"));
     searchAction->setText(ui("Search"));
@@ -352,10 +360,11 @@ void MainWindow::startSearch()
     }
     state = State::Searching;
     refreshStatus();
-    const QJsonObject request{{"folder", QDir::fromNativeSeparators(folderEdit->text())}, {"query", queryEdit->text()},
+    QJsonObject request{{"folder", QDir::fromNativeSeparators(folderEdit->text())}, {"query", queryEdit->text()},
         {"regex", regex->isChecked()}, {"caseSensitive", respectCase->isChecked()},
         {"hidden", hidden->isChecked()}, {"ignored", ignored->isChecked()}, {"filenames", filenames->isChecked()},
         {"pathPattern", patternEdit->text()}, {"mode", mode->currentData().toString()}};
+    applyPerformanceSettings(request);
     worker.start("search", request, [this](const QJsonObject &data) {
         const auto type = data.value("type").toString();
         if (type == "progress" || type == "done")
@@ -407,20 +416,33 @@ void MainWindow::addMatch(const QJsonObject &match)
     if (id.isEmpty()) id = match.value("path").toString();
     auto *group = groups.value(id);
     if (!group) {
-        group = new QTreeWidgetItem(results, {match.value("displayPath").toString()});
+        // Worker completion order varies. Sort just the document headings, leaving each
+        // document's matches in reading order and the existing selection on the same item.
+        const auto display = match.value("displayPath").toString();
+        constexpr int identityRole = Qt::UserRole + 1;
+        int first = 0, last = results->topLevelItemCount();
+        while (first < last) {
+            const int middle = first + (last - first) / 2;
+            const auto *existing = results->topLevelItem(middle);
+            const int order = QString::compare(existing->text(0), display);
+            if (order < 0 || (order == 0 && existing->data(0, identityRole).toString() < id))
+                first = middle + 1;
+            else
+                last = middle;
+        }
+        group = new QTreeWidgetItem(QStringList{display});
+        group->setData(0, identityRole, id);
         group->setToolTip(0, match.value("path").toString());
         QFont groupFont = results->font();
         groupFont.setBold(true);
         group->setFont(0, groupFont);
+        results->insertTopLevelItem(first, group);
         groups.insert(id, group);
     }
     auto *item = new QTreeWidgetItem(group, {matchLabel(match)});
     item->setData(0, Qt::UserRole, match);
     item->setToolTip(0, match.value("text").toString());
-    if (count == 1) {
-        group->setExpanded(true);
-        results->setCurrentItem(item);
-    }
+    if (count == 1) navigation->selectMatch(item);
 }
 
 void MainWindow::discardContentMatches(const QJsonObject &file)
@@ -429,9 +451,30 @@ void MainWindow::discardContentMatches(const QJsonObject &file)
     if (id.isEmpty()) id = file.value("path").toString();
     auto *group = groups.value(id);
     if (!group) return;
+    // Pick a surviving occurrence before removing the selection. This prevents Qt
+    // from briefly selecting and previewing another row that is also being withdrawn.
+    auto *current = results->currentItem();
+    const auto isFilename = [](const QTreeWidgetItem *item) {
+        return item->data(0, Qt::UserRole).toJsonObject().value("kind") == "filename";
+    };
+    if (current && (current == group || (current->parent() == group && !isFilename(current)))) {
+        QTreeWidgetItem *replacement = nullptr;
+        for (int i = 0; i < group->childCount(); ++i) {
+            if (isFilename(group->child(i))) {
+                replacement = group->child(i);
+                break;
+            }
+        }
+        const bool headingSurvives = current == group && replacement;
+        const int documents = results->topLevelItemCount();
+        if (!replacement && documents > 1) {
+            const int next = (results->indexOfTopLevelItem(group) + 1) % documents;
+            replacement = results->topLevelItem(next)->child(0);
+        }
+        if (!headingSurvives) navigation->selectMatch(replacement);
+    }
     for (int index = group->childCount() - 1; index >= 0; --index) {
-        const auto hit = group->child(index)->data(0, Qt::UserRole).toJsonObject();
-        if (hit.value("kind") == "filename") continue;
+        if (isFilename(group->child(index))) continue;
         delete group->takeChild(index);
         --count;
     }
@@ -455,6 +498,7 @@ void MainWindow::refreshStatus()
     cancel->setEnabled(active);
     cancelAction->setEnabled(active);
     search->setEnabled(!active);
+    navigation->setEnabled(count > 0);
     const QString scanned = filesScanned == 1 ? ui("1 file scanned")
                                                  : ui("%1 files scanned").arg(filesScanned);
     const QString matches = count == 1 ? ui("1 match") : ui("%1 matches").arg(count);
@@ -497,9 +541,12 @@ void MainWindow::showErrors()
 
 void MainWindow::adaptLayout()
 {
-    if (!splitter) return;
+    if (!preview) return;
     const auto orientation = width() < 630 ? Qt::Vertical : Qt::Horizontal;
     if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
+    constexpr int previewGap = 8;
+    preview->layout()->setContentsMargins(orientation == Qt::Horizontal ? previewGap : 0,
+                                         orientation == Qt::Vertical ? previewGap : 0, 0, 0);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)

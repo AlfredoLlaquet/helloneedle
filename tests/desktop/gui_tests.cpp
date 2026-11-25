@@ -6,6 +6,7 @@
 #include "gui_appearance.h"
 #include "gui_icon.h"
 #include "gui_capture.h"
+#include "gui_search_stream.h"
 #include "picker_native.h"
 
 #include <QAbstractButton>
@@ -14,6 +15,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEnterEvent>
@@ -28,19 +30,27 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPlainTextEdit>
+#include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSet>
+#include <QSpinBox>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextBrowser>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUrl>
 
+#include <cstdio>
 #include <functional>
 #include <memory>
 
@@ -85,6 +95,24 @@ QJsonObject matchData(QTreeWidgetItem &item)
     if (data.canConvert<QJsonObject>())
         return data.toJsonObject();
     return QJsonObject::fromVariantMap(data.toMap());
+}
+
+QByteArray frame(const QJsonObject &event)
+{
+    return QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n';
+}
+
+QByteArray textHit(const QString &path, int line)
+{
+    const auto name = QFileInfo(path).fileName();
+    return frame({{"type", "match"}, {"path", path}, {"displayPath", name}, {"kind", "text"},
+        {"location", QJsonObject{{"index", line - 1}, {"line", line}}}, {"mode", "document"},
+        {"text", "Match"}, {"start", 0}, {"length", 5}, {"blockStart", 0}, {"blockLength", 5}});
+}
+
+QByteArray searchDone(int hits, int files)
+{
+    return frame({{"type", "done"}, {"count", hits}, {"files", files}, {"errors", 0}, {"truncated", false}});
 }
 
 QString dialogContent(QDialog &dialog)
@@ -667,6 +695,38 @@ private slots:
         const QSize original = image->pixmap().size();
         QTest::mouseClick(zoom, Qt::LeftButton);
         QVERIFY(until([&] { return image->pixmap().width() > original.width(); }));
+        auto *scroller = control<QWidget>("pdfPane")->findChild<QScrollArea *>();
+        QVERIFY(scroller);
+        for (int i = 0; i < 12 && image->height() < 2.4 * scroller->viewport()->height(); ++i)
+            QTest::mouseClick(zoom, Qt::LeftButton);
+        auto *bar = scroller->verticalScrollBar();
+        QVERIFY(bar->maximum() > 0);
+        // Locate the actual amber annotation independently of the worker's
+        // coordinates, including when the pixmap uses a high device pixel ratio.
+        const auto raster = image->pixmap().toImage().convertToFormat(QImage::Format_RGB32);
+        int top = raster.height(), bottom = -1;
+        for (int y = 0; y < raster.height(); y += 2) {
+            const auto *pixels = reinterpret_cast<const QRgb *>(raster.constScanLine(y));
+            for (int x = 0; x < raster.width(); x += 2) {
+                const auto c = pixels[x];
+                if (qRed(c) > 210 && qRed(c) - qGreen(c) > 8 && qGreen(c) - qBlue(c) > 24) {
+                    top = qMin(top, y);
+                    bottom = y;
+                    break;
+                }
+            }
+        }
+        QVERIFY2(bottom >= top, "Missing painted PDF match after zooming");
+        const int hitY = qRound((top + bottom) * 0.5 * image->height() / raster.height());
+        const int target = qBound(bar->minimum(), hitY - scroller->viewport()->rect().center().y(), bar->maximum());
+        QVERIFY2(target > bar->minimum() + 3 && target < bar->maximum() - 3,
+                 "The example must allow centering without clamping at a page edge");
+        QVERIFY2(until([&] { return std::abs(bar->value() - target) <= 4; }),
+                 qPrintable(QString("PDF scroll %1; centered value %2").arg(bar->value()).arg(target)));
+        VERIFY_OK(guiqa::saveView(*window, "pdf-zoomed-centered"));
+        bar->setValue(bar->minimum());
+        QTest::qWait(150);
+        QCOMPARE(bar->value(), bar->minimum());
         QTest::mouseClick(fit, Qt::LeftButton);
         QVERIFY(until([&] { return image->pixmap().width() <= original.width() + 2; }));
         QTest::mouseClick(prev, Qt::LeftButton);
@@ -681,6 +741,248 @@ private slots:
         QVERIFY(until([&] { return preview->isVisible() && preview->textCursor().block().text().contains("Closing page"); }));
         QTest::mouseClick(toggle, Qt::LeftButton);
         QVERIFY(until([&] { return image->isVisible() && !image->pixmap().isNull() && !next->isEnabled(); }));
+    }
+
+    void resultNavigation()
+    {
+        const QStringList identifiers{"nextDocumentButton", "nextMatchButton", "previousMatchButton", "previousDocumentButton"};
+        const bool spanish = hn::currentLanguage() == "es";
+        const QStringList names = spanish
+            ? QStringList{"Documento siguiente", "Coincidencia siguiente", "Coincidencia anterior", "Documento anterior"}
+            : QStringList{"Next document", "Next match", "Previous match", "Previous document"};
+#ifdef Q_OS_MACOS
+        const auto physicalControl = Qt::MetaModifier;
+#else
+        const auto physicalControl = Qt::ControlModifier;
+#endif
+        const QList<QList<QKeySequence>> keys{
+            {QKeySequence(physicalControl | Qt::Key_Down)}, {QKeySequence(Qt::Key_F3), QKeySequence(Qt::ALT | Qt::Key_Down)},
+            {QKeySequence(Qt::SHIFT | Qt::Key_F3), QKeySequence(Qt::ALT | Qt::Key_Up)}, {QKeySequence(physicalControl | Qt::Key_Up)}};
+        QList<QToolButton *> buttons;
+        int previousX = -1;
+        for (int i = 0; i < identifiers.size(); ++i) {
+            auto *button = window->findChild<QToolButton *>(identifiers[i]);
+            QVERIFY(button && button->isVisible() && !button->isEnabled());
+            QVERIFY(!button->icon().isNull() && button->toolButtonStyle() == Qt::ToolButtonIconOnly);
+            QCOMPARE(button->accessibleName(), names[i]);
+            QVERIFY2(button->toolTip().contains(names[i]), qPrintable(button->toolTip()));
+            for (const auto &key : keys[i])
+                QVERIFY2(button->toolTip().contains(key.toString(QKeySequence::NativeText)), qPrintable(button->toolTip()));
+            const auto position = button->mapTo(window.get(), QPoint());
+            QVERIFY(position.x() > previousX && position.y() < results->mapTo(window.get(), QPoint()).y());
+            previousX = position.x();
+            buttons << button;
+        }
+
+        // Simulate a worker finishing zulu before alpha, then another zulu
+        // occurrence. Every selection invokes the installed worker for its preview.
+        guiqa::SearchStream stream;
+        const QString alpha = stream.folder.filePath("alpha.txt"), zulu = stream.folder.filePath("zulu.txt");
+        for (const auto &path : {alpha, zulu}) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("Match one in " + QFileInfo(path).fileName().toUtf8() + "\nMatch two in "
+                       + QFileInfo(path).fileName().toUtf8() + "\n");
+        }
+        QVERIFY(stream.prepare(textHit(zulu, 1), textHit(alpha, 1) + textHit(alpha, 2) + textHit(zulu, 2) + searchDone(4, 2)));
+        control<QLineEdit>("folderEdit")->setText(stream.folder.path());
+        query->setText("Match");
+        stream.start(*search);
+        auto selected = [&](const QString &name, int line) {
+            auto *item = results->currentItem();
+            if (!item || !item->isSelected() || !item->parent() || !item->parent()->isExpanded()
+                || !results->viewport()->rect().intersects(results->visualItemRect(item))) return false;
+            const auto data = matchData(*item);
+            const auto cursor = selectedText("Match");
+            return QFileInfo(data["path"].toString()).fileName() == name && data["location"].toObject()["line"].toInt() == line
+                && !cursor.isNull() && cursor.block().text() == "Match " + (line == 1 ? QStringLiteral("one in ") : QStringLiteral("two in ")) + name;
+        };
+        QVERIFY(until([&] { return selected("zulu.txt", 1); }));
+        QVERIFY(cancel->isEnabled());
+        for (auto *button : buttons) QVERIFY(button->isEnabled());
+        QTest::mouseClick(buttons[0], Qt::LeftButton);
+        QVERIFY(selected("zulu.txt", 1));
+        auto *originalHit = results->currentItem();
+        QVERIFY(stream.resume());
+        QVERIFY(until([&] { return !cancel->isEnabled(); }));
+        QCOMPARE(results->currentItem(), originalHit);
+        QCOMPARE(results->topLevelItem(0)->text(0), QStringLiteral("alpha.txt"));
+        QCOMPARE(results->topLevelItem(1)->text(0), QStringLiteral("zulu.txt"));
+        results->topLevelItem(0)->setExpanded(false);
+
+        query->setFocus();
+        QTest::keyClick(query, Qt::Key_Down, physicalControl);
+        QVERIFY(until([&] { return selected("alpha.txt", 1); }));
+        QTest::keyClick(query, Qt::Key_F3);
+        QVERIFY(until([&] { return selected("alpha.txt", 2); }));
+        QTest::keyClick(query, Qt::Key_Down, Qt::AltModifier);
+        QVERIFY(until([&] { return selected("zulu.txt", 1); }));
+        QTest::keyClick(query, Qt::Key_F3, Qt::ShiftModifier);
+        QVERIFY(until([&] { return selected("alpha.txt", 2); }));
+        QTest::keyClick(query, Qt::Key_Up, Qt::AltModifier);
+        QVERIFY(until([&] { return selected("alpha.txt", 1); }));
+        QTest::mouseClick(buttons[2], Qt::LeftButton);
+        QVERIFY(until([&] { return selected("zulu.txt", 2); }));
+        QTest::mouseClick(buttons[1], Qt::LeftButton);
+        QVERIFY(until([&] { return selected("alpha.txt", 1); }));
+        QTest::mouseClick(buttons[3], Qt::LeftButton);
+        QVERIFY(until([&] { return selected("zulu.txt", 1); }));
+        preview->setFocus();
+        QTest::keyClick(preview, Qt::Key_Up, physicalControl);
+        QVERIFY(until([&] { return selected("alpha.txt", 1); }));
+        results->setCurrentItem(results->topLevelItem(1));
+        QTest::mouseClick(buttons[1], Qt::LeftButton);
+        QVERIFY(until([&] { return selected("zulu.txt", 1); }));
+        results->setCurrentItem(results->topLevelItem(1));
+        QTest::mouseClick(buttons[2], Qt::LeftButton);
+        QVERIFY(until([&] { return selected("alpha.txt", 2); }));
+        VERIFY_OK(guiqa::saveView(*window, "result-navigation"));
+
+        // A provisional result can be withdrawn when the decoder reaches the end.
+        guiqa::SearchStream retracted;
+        const auto path = retracted.folder.filePath("zulu.txt");
+        QVERIFY(QFile::copy(zulu, path));
+        QVERIFY(retracted.prepare(textHit(path, 1), frame({{"type", "discard"}, {"path", path}}) + searchDone(0, 1)));
+        control<QLineEdit>("folderEdit")->setText(retracted.folder.path());
+        retracted.start(*search);
+        QVERIFY(until([&] { return selected("zulu.txt", 1); }));
+        QVERIFY(retracted.resume());
+        QVERIFY(until([&] { return search->isEnabled(); }));
+        QCOMPARE(results->topLevelItemCount(), 0);
+        QVERIFY(results->currentItem() == nullptr && preview->extraSelections().isEmpty());
+        for (auto *button : buttons) QVERIFY(!button->isEnabled());
+    }
+
+    void previewCentering()
+    {
+        QTemporaryDir docs;
+        QFile file(docs.filePath("lines.txt"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const auto contextLine = QByteArray("Some context for the preview. ").repeated(18) + '\n';
+        file.write("Match on the first line.\n");
+        for (int n = 0; n < 90; ++n) file.write(contextLine);
+        file.write("Match on the last line.");
+        file.close();
+        QVERIFY(submit("Match", false, docs.path()));
+        auto centered = [&](const QString &line) {
+            const auto highlight = selectedText("Match");
+            if (highlight.isNull() || highlight.block().text() != line) return false;
+            auto start = highlight;
+            start.setPosition(highlight.selectionStart());
+            const auto rect = preview->cursorRect(start);
+            return std::abs(rect.center().y() - preview->viewport()->rect().center().y()) <= qMax(3, rect.height() / 2);
+        };
+        QVERIFY(selectHit("lines.txt", 0));
+        QVERIFY(until([&] { return centered("Match on the first line."); }));
+        QVERIFY(selectHit("lines.txt", 1));
+        QVERIFY(until([&] { return centered("Match on the last line."); }));
+        VERIFY_OK(guiqa::saveView(*window, "centered-final-line"));
+        auto *bar = preview->verticalScrollBar();
+        QVERIFY(bar->value() > bar->minimum());
+        bar->setValue(bar->minimum());
+        QTest::qWait(150);
+        QCOMPARE(bar->value(), bar->minimum());
+
+        auto *split = window->findChild<QSplitter *>();
+        auto *heading = control<QLabel>("previewTitle");
+        QVERIFY(split && heading);
+        for (const auto orientation : {Qt::Horizontal, Qt::Vertical}) {
+            window->resize(orientation == Qt::Horizontal ? 760 : 530, window->height());
+            QVERIFY(until([&] { return split->orientation() == orientation; }));
+            auto *handle = split->handle(1);
+            const QPoint relative = heading->mapTo(split, QPoint()) - handle->mapTo(split, QPoint());
+            const int gap = orientation == Qt::Horizontal ? relative.x() - handle->width() : relative.y() - handle->height();
+            QVERIFY2(gap >= 8, qPrintable(QStringLiteral("Preview content gap at splitter: %1").arg(gap)));
+        }
+    }
+
+    void performanceSettings()
+    {
+        auto *menu = control<QMenu>("fileMenu");
+        auto *action = control<QAction>("settingsAction");
+        QVERIFY(menu && action && menu->actions().contains(action));
+        const auto visit = [&](QAction &open, int expectedWorkers, int expectedPdf, int newWorkers,
+                               int newPdf, QDialogButtonBox::StandardButton choice, int probedLimit = 0) -> QString {
+            QString error = "Settings dialog did not open";
+            QObject watcher;
+            QTimer::singleShot(50, &watcher, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!dialog) return;
+                auto *workers = dialog->findChild<QSpinBox *>("searchWorkersSpin");
+                auto *pdfs = dialog->findChild<QSpinBox *>("pdfConversionsSpin");
+                auto *buttons = dialog->findChild<QDialogButtonBox *>("settingsButtons");
+                if (!workers || !pdfs || !buttons || !buttons->button(choice)) {
+                    error = "Search workers, PDF conversions or dialog buttons missing";
+                    dialog->reject();
+                    return;
+                }
+                error.clear();
+                if (probedLimit && !until([&] { return workers->maximum() == probedLimit; }, 5000))
+                    error = "The worker CPU probe did not replace Qt's initial CPU estimate";
+                else if (workers->value() != expectedWorkers || pdfs->value() != expectedPdf)
+                    error = "Saved performance settings were not restored";
+                else if (!workers->specialValueText().contains("auto", Qt::CaseInsensitive)
+                         || !pdfs->specialValueText().contains("auto", Qt::CaseInsensitive)
+                         || !workers->specialValueText().contains(QRegularExpression("[1-9]")))
+                    error = "Automatic worker setting must show the effective count";
+                else if (expectedWorkers == 0 && choice == QDialogButtonBox::Ok)
+                    error = guiqa::saveView(*dialog, "performance-settings");
+                workers->setValue(newWorkers);
+                pdfs->setValue(newPdf);
+                buttons->button(choice)->click();
+            });
+            open.trigger();
+            return error;
+        };
+        guiqa::SearchStream active;
+        const auto progress = frame({{"type", "progress"}, {"files", 1}});
+        QVERIFY(active.prepare(progress, searchDone(0, 1)));
+        control<QLineEdit>("folderEdit")->setText(active.folder.path());
+        query->setText("Match");
+        active.start(*search);
+        QVERIFY(until([&] { return !active.request().isEmpty(); }));
+        QCOMPARE(active.request().value("searchWorkers").toInt(-1), 0);
+        QCOMPARE(active.request().value("pdfConversions").toInt(-1), 0);
+        VERIFY_OK(visit(*action, 0, 0, 1, 1, QDialogButtonBox::Ok));
+        QVERIFY(cancel->isEnabled());
+        QVERIFY(active.resume());
+        QVERIFY(until([&] { return search->isEnabled(); }));
+
+        guiqa::SearchStream next;
+        QVERIFY(next.prepare(progress, searchDone(0, 1)));
+        control<QLineEdit>("folderEdit")->setText(next.folder.path());
+        next.start(*search);
+        QVERIFY(until([&] { return !next.request().isEmpty(); }));
+        QCOMPARE(next.request().value("searchWorkers").toInt(-1), 1);
+        QCOMPARE(next.request().value("pdfConversions").toInt(-1), 1);
+        QVERIFY(next.resume());
+        QVERIFY(until([&] { return search->isEnabled(); }));
+
+        hn::MainWindow reopened;
+        reopened.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&reopened));
+        auto *storedAction = reopened.findChild<QAction *>("settingsAction");
+        QVERIFY(storedAction);
+        VERIFY_OK(visit(*storedAction, 1, 1, 0, 0, QDialogButtonBox::Cancel));
+        VERIFY_OK(visit(*storedAction, 1, 1, 0, 0, QDialogButtonBox::Ok));
+        QCOMPARE(QSettings().value("performance/searchWorkers", 0).toInt(), 0);
+        QCOMPARE(QSettings().value("performance/pdfConversions", 0).toInt(), 0);
+
+        // The Rust worker can report a higher allowance than the GUI's initial estimate.
+        const int estimate = qMax(1, QThread::idealThreadCount());
+        const int savedWorkers = estimate + 2, savedPdf = estimate + 1, probed = estimate + 4;
+        QSettings().setValue("performance/searchWorkers", savedWorkers);
+        QSettings().setValue("performance/pdfConversions", savedPdf);
+        const auto installed = qgetenv("HELLONEEDLE_WORKER");
+        qputenv("HELLONEEDLE_WORKER", QCoreApplication::applicationFilePath().toUtf8());
+        qputenv("HN_QA_PROBE_CPUS", QByteArray::number(probed));
+        const auto restored = visit(*storedAction, savedWorkers, savedPdf, savedWorkers, savedPdf,
+                                    QDialogButtonBox::Ok, probed);
+        qputenv("HELLONEEDLE_WORKER", installed);
+        qunsetenv("HN_QA_PROBE_CPUS");
+        VERIFY_OK(restored);
+        QCOMPARE(QSettings().value("performance/searchWorkers").toInt(), savedWorkers);
+        QCOMPARE(QSettings().value("performance/pdfConversions").toInt(), savedPdf);
     }
 
     void optionsAndCancellation()
@@ -816,6 +1118,12 @@ private slots:
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && QByteArray(argv[1]) == "search")
+        return guiqa::replaySearchStream();
+    if (argc == 2 && QByteArray(argv[1]) == "--parallelism") {
+        std::puts(qgetenv("HN_QA_PROBE_CPUS").constData());
+        return 0;
+    }
     if (qEnvironmentVariableIsSet("HN_QA_WIDGET_PICKER"))
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);

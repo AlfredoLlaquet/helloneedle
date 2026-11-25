@@ -29,6 +29,7 @@ jobs:
         with:
           release: ${{ env.HN_FREEBSD_RELEASE }}
           arch: x86_64
+          cpu: '4'
           mem: '8192'
           sync: rsync
           copyback: 'true'

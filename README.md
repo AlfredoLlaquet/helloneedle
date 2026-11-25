@@ -93,9 +93,11 @@ Hello Needle 1.1.0 on FreeBSD found 15 matches across 13 scanned documents. In t
 
 ### Changes in the 1.2.0 development build
 
+- **Move through results as they arrive.** Four icon buttons under **Results** select the next document, next match, previous match, or previous document. The tree follows your selection and the preview centers the highlighted passage. [Navigation and keyboard shortcuts](#move-between-results)
+- **Search several files at once.** Hello Needle normally uses half the logical processors available to it. **File → Settings…** lets you change the number of workers and simultaneous PDF conversions. [Adjust search performance](#adjust-search-performance)
 - **Follow the whole folder scan.** **Files scanned** advances once for every file examined after your filters apply. Videos, archives, other recognized binary files, and PDFs with no searchable text all count. Hello Needle silently passes over their contents. Files with unfamiliar extensions are checked for readable text. **Search file names** can still find a video or archive by name. **Details…** lists files that actually failed to open or process.
 - **Search large text files and source.** Text lists, JSON exports, and HTML or Markdown in **Source** mode are read in large chunks. File size and line count no longer stop the search. A literal phrase can span two chunks, even within a single very long line. Selecting it takes the preview straight to the passage. A complex regular expression on an exceptionally long individual line can still reach the reader’s memory budget.
-- **Search older Spanish documents and saved web pages.** Plain text can use Windows-1252, including accented letters and inverted punctuation. The Word reader follows inherited text visibility in older `.doc` files. HTML exports containing terminal control characters can be searched as a document or as source.
+- **Search older Spanish documents and saved web pages.** Plain text, HTML, and Markdown can use Windows-1252, including accented letters, curly quotes, and inverted punctuation. This works in both **Document** and **Source**. In a Word-exported `.txt`, an ordinary hyphen can find a word that uses Word’s invisible nonbreaking-hyphen marker. OpenDocument can also read a supported legacy encoding declared in its XML. The Word reader follows inherited text visibility in older `.doc` files.
 - **Search long Word manuscripts.** Hello Needle reads the main body of a DOCX paragraph by paragraph. Formatting changes can split a phrase into several pieces in the file. You can still find the whole phrase and see it highlighted with the surrounding paragraphs.
 - **Search long PDFs.** The PDF reader works page by page. The total number of words and the total amount of page layout data no longer stop a search. If Poppler crashes while extracting the page layout, Hello Needle retries using plain text. Recovered passages open with the exact text selected. **Show page** still opens the printed page when coordinates for a highlight are unavailable. A scanned page without a text layer is skipped, and searchable pages in the same PDF keep their original page numbers.
 
@@ -132,6 +134,25 @@ Open **Options** to limit the search to certain files or change what counts as a
 - Turn on **Search file names** to include matches in filenames as well as in their contents. **Include hidden files** and **Include ignored files** let you search files the default search skips.
 
 Press **Escape** to cancel a search. **Ctrl+F** returns to the search field and **Ctrl+O** opens the folder chooser. On a Mac use **Command+F** and **Command+O**. If a file cannot be read, the other files are still searched. Click **Details…** in the status bar to see which file caused the problem.
+
+### Move between results
+
+The four buttons below **Results** become available with the first match. Their hints show the shortcuts. A single chevron moves one occurrence and a double chevron moves one document. These controls are available in the 1.2.0 development build.
+
+| Button order | Shortcut | Selection |
+| --- | --- | --- |
+| Next document | Ctrl+Down | First match in the next document |
+| Next match | F3 or Alt+Down | Next match, continuing into the next document |
+| Previous match | Shift+F3 or Alt+Up | Previous match, continuing into the previous document |
+| Previous document | Ctrl+Up | First match in the previous document |
+
+At either end, navigation wraps through the results already found. Selecting an occurrence expands its document and brings the highlighted passage to the vertical center of the text preview. You can then scroll freely. In the printed PDF view, Hello Needle centers the highlighted words as far as the page’s scroll range permits.
+
+### Adjust search performance
+
+Choose **File → Settings…** in the development build. **Automatic** shows the number of search workers your computer will use. On a computer with eight logical processors available, the default is four. Each worker reads and searches one file at a time. Searching just one large document uses one worker. When searching a mechanical drive, a smaller worker count can reduce the time spent seeking between files.
+
+Under **Advanced**, **Simultaneous PDF conversions** controls how many search workers may run Poppler at once. The default is two, or one with a single worker. Other workers can continue with text or Word documents. Hello Needle also considers available memory before starting more demanding files. Your settings are saved for your desktop account and take effect at the start of the next search.
 
 ### English and Spanish
 

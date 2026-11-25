@@ -42,6 +42,7 @@ impl<R: Read> XmlInput<R> {
 impl<R: Read> BufRead for XmlInput<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         while self.available.is_empty() && !self.finished {
+            crate::search::checkpoint()?;
             let input = self.source.fill_buf()?;
             let last = input.is_empty();
             let (status, consumed, produced) =

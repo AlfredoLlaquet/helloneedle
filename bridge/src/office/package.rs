@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::{MAX_FILE_BYTES, MAX_TEXT_BYTES, MAX_XML_NODES};
 use anyhow::{anyhow, bail, Result};
-use encoding_rs::{UTF_16BE, UTF_16LE};
 use roxmltree::{Document, ParsingOptions};
 use std::{
     collections::HashMap,
@@ -12,25 +11,6 @@ use zip::{result::ZipError, ZipArchive};
 
 const MAX_DIRECTORY_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ENTRIES: u64 = 20_000;
-
-pub(super) fn decode_xml(bytes: &[u8]) -> Result<String> {
-    if bytes.starts_with(&[0xff, 0xfe])
-        || bytes.starts_with(&[b'<', 0])
-        || bytes.starts_with(&[0xfe, 0xff])
-        || bytes.starts_with(&[0, b'<'])
-    {
-        let little = bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[b'<', 0]);
-        let encoding = if little { UTF_16LE } else { UTF_16BE };
-        let (txt, _, errors) = encoding.decode(bytes);
-        if errors {
-            bail!("corrupt_document: invalid UTF-16 XML");
-        }
-        return Ok(txt.into_owned());
-    }
-    std::str::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes))
-        .map(str::to_owned)
-        .map_err(|_| anyhow!("corrupt_document: invalid XML encoding"))
-}
 
 pub(super) fn parse(xml: &str) -> Result<Document<'_>> {
     Document::parse_with_options(
@@ -206,7 +186,7 @@ impl Package {
         if data.len() as u64 > remaining {
             bail!("resource_limit: expanded ZIP data");
         }
-        Ok(Some(decode_xml(&data)?))
+        Ok(Some(super::xml_encoding::decode(&data)?))
     }
     pub fn rels(&mut self, part: &str) -> Result<HashMap<String, Rel>> {
         let path = if part.is_empty() {

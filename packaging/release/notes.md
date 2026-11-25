@@ -2,6 +2,9 @@ Hello Needle @VERSION@ finds words and phrases in local documents, including sea
 
 **New in @VERSION@**
 
+- Navigate the live results by document or occurrence with the four buttons below **Results** or their keyboard shortcuts. The preview centers the selected match.
+- Search multiple files in parallel. **File → Settings…** remembers your preferred number of search workers and simultaneous PDF conversions.
+- Find text in Windows-1252 HTML and Markdown, Word-exported text containing nonbreaking-hyphen markers, and OpenDocument XML with a supported declared legacy encoding.
 - Search large text files and JSON exports as they are read. A match can appear millions of lines into a file or inside a long single line. Selecting it opens the passage around that occurrence.
 - Search older Western European text with its original accents, saved HTML containing control characters, heavily formatted DOCX files, and older Word documents that use styles to control text visibility.
 - Search book-length PDFs a page at a time. If the PDF text extractor crashes while locating words on the printed page, Hello Needle retries in text mode. Successful matches keep their page numbers and the text preview highlights the selected occurrence.

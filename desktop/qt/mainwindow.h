@@ -19,6 +19,7 @@ class QTreeWidgetItem;
 
 namespace hn {
 class PreviewPane;
+class ResultNavigation;
 class SearchStatus;
 class MainWindow : public QMainWindow {
 public:
@@ -71,6 +72,7 @@ private:
     QComboBox *mode = nullptr;
     QSplitter *splitter = nullptr;
     QTreeWidget *results = nullptr;
+    ResultNavigation *navigation = nullptr;
     PreviewPane *preview = nullptr;
     QMenu *fileMenu = nullptr;
     QMenu *searchMenu = nullptr;
@@ -78,6 +80,7 @@ private:
     QMenu *helpMenu = nullptr;
     QAction *folderAction = nullptr;
     QAction *openAction = nullptr;
+    QAction *settingsAction = nullptr;
     QAction *quitAction = nullptr;
     QAction *searchAction = nullptr;
     QAction *focusAction = nullptr;

@@ -71,6 +71,13 @@ pub(super) fn extract(path: &Path, mut file: File, out: &mut Output) -> Result<(
         if let Some(s) = child.try_wait()? {
             break s;
         }
+        if crate::search::stopped() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = output.join();
+            let _ = diagnostics.join();
+            bail!("search interrupted");
+        }
         if started.elapsed() > Duration::from_secs(20) {
             let _ = child.kill();
             let _ = child.wait();

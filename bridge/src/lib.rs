@@ -15,6 +15,11 @@ pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_BLOCKS: usize = 200_000;
 
+/// The GUI's Automatic label and the search worker use the same CPU allowance.
+pub fn available_processors() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
 #[derive(Debug, Serialize)]
 pub struct Block {
     pub text: String,
