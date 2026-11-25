@@ -34,7 +34,9 @@ def make_corpus(folder, batches):
 def group_rss_kib(group):
     # The search and all of its converter children are in a dedicated process group.
     # BSD and Linux ps both express RSS in KiB. A shared page counts in each process.
-    rows = subprocess.check_output(["ps", "-ax", "-o", "pgid=,rss="], text=True, timeout=5)
+    # In FreeBSD ps an '=' starts a header spanning the rest of that argument,
+    # including any comma. Separate options with normal headings work on both OSes.
+    rows = subprocess.check_output(["ps", "-ax", "-o", "pgid", "-o", "rss"], text=True, timeout=5)
     group = str(group)
     return sum(int(row[1]) for line in rows.splitlines()
                if len(row := line.split()) == 2 and row[0] == group and row[1].isdigit())
@@ -76,12 +78,16 @@ def timed_search(worker, folder, workers, expected):
                 if not times.done() and process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
         assert process.wait(timeout=5) == 0
+    if peak == 0:
+        raise RuntimeError(f"No positive RSS sample for worker process group {process.pid}")
     return {"first_match_ms": round(first * 1000, 2), "total_ms": round(total * 1000, 2),
             "sampled_peak_rss_kib": peak}
 
 
 def benchmark(worker, root, batches=6, settings=(1, 2, 4, 0)):
     root.mkdir()
+    if group_rss_kib(os.getpgrp()) == 0:
+        raise RuntimeError("ps did not report resident memory for the benchmark's own process group")
     available = int(subprocess.check_output([worker, "--parallelism"], text=True))
     print(f"Search benchmark on {platform.system()} {platform.release()}, {available} available logical CPUs.")
     print(f"Per run: {batches} each of PDFs, DOCX files, multiline text lists and single-line JSON. "
