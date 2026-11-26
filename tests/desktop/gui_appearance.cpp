@@ -5,6 +5,7 @@
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
@@ -23,6 +24,7 @@
 #include <QStyle>
 #include <QStyleHints>
 #include <QStyleOptionButton>
+#include <QStyleOptionComboBox>
 #include <QStatusBar>
 #include <QSysInfo>
 #include <QTest>
@@ -191,6 +193,20 @@ QJsonObject platformDetails(const QString &source)
 
 QString inspectLayout(QWidget &window)
 {
+    const auto *view = window.findChild<QComboBox *>("resultViewCombo");
+    if (!view)
+        return "Missing result view selector";
+    QStyleOptionComboBox viewStyle;
+    viewStyle.initFrom(view);
+    const QRect field = view->style()->subControlRect(QStyle::CC_ComboBox, &viewStyle, QStyle::SC_ComboBoxEditField, view);
+    // Qt paints the label with two logical pixels of padding on either side.
+    const int available = field.width() - 4;
+    for (int i = 0; i < view->count(); ++i) {
+        const auto text = view->itemText(i);
+        const int needed = view->fontMetrics().horizontalAdvance(text);
+        if (available < needed)
+            return QString("Result view ‘%1’ needs %2 pixels, but its label has %3").arg(text).arg(needed).arg(available);
+    }
     const QStringList names = {"folderEdit", "browseButton", "queryEdit", "searchButton",
         "cancelButton", "optionsButton", "regexCheck", "caseCheck", "hiddenCheck", "ignoredCheck",
         "filenamesCheck", "pathPatternEdit", "modeCombo", "resultsView", "previewPane"};

@@ -498,6 +498,20 @@ private slots:
                          .arg(split->widget(1)->minimumSizeHint().width())));
             VERIFY_OK(guiqa::inspectLayout(fresh));
         }
+        window->resize(622, qRound(451 * .85));
+        QVERIFY(submit("Needle"));
+        QVERIFY(selectHit("report.pdf"));
+        auto *image = control<QLabel>("pdfImage");
+        QVERIFY(until([&] { return image->isVisible() && !image->pixmap().isNull(); }));
+        QCOMPARE(control<QSplitter>("resultSplitter")->orientation(), Qt::Horizontal);
+        QVERIFY(window->frameGeometry().width() <= 687 && window->frameGeometry().height() <= 455);
+        for (const auto *id : {"openOriginalButton", "pdfTextButton", "copyMatchButton"}) {
+            auto *button = control<QAbstractButton>(id);
+            QVERIFY(button && button->isVisible());
+            QVERIFY(window->rect().contains(QRect(button->mapTo(window.get(), QPoint()), button->size())));
+        }
+        VERIFY_OK(guiqa::inspectLayout(*window));
+        VERIFY_OK(guiqa::saveView(*window, "compact-pdf"));
     }
 
     void unicodeAndRepeat()
@@ -557,8 +571,11 @@ private slots:
 
     void scannedFilesAndErrors()
     {
-        QTemporaryDir docs;
-        QVERIFY(docs.isValid());
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString subfolder = QStringLiteral("Correspondence from the committee on gravitational appeals");
+        QVERIFY(QDir(root.path()).mkdir(subfolder));
+        const QDir docs(root.filePath(subfolder));
         const QString title = "Witness statements in the appeal against gravity and supplementary exhibits from the hearing.docx";
         QVERIFY(QFile::copy(QDir(folder).filePath("letter.docx"), docs.filePath(title)));
         QFile quiet(docs.filePath("01-quiet.txt"));
@@ -597,20 +614,36 @@ private slots:
         QVERIFY(errors->isVisible() && details->isVisible());
         VERIFY_OK(guiqa::inspectLayout(*window));
 
-        window->resize(qMin(514, window->width()), window->height());
         QVERIFY(selectHit(title));
         QVERIFY(until([&] { return !selectedText("Needle").isNull(); }));
         auto *heading = control<QLabel>("previewTitle");
+        auto *directory = control<QPlainTextEdit>("previewDirectory");
         auto *open = control<QAbstractButton>("openOriginalButton");
-        QVERIFY(heading && open && open->isEnabled());
+        auto *split = control<QSplitter>("resultSplitter");
+        QVERIFY(heading && directory && open && open->isEnabled() && split);
         QCOMPARE(heading->text(), (spanish ? QString("Párrafo 2 - ") : QString("Paragraph 2 - ")) + title);
         QVERIFY(heading->wordWrap() && heading->alignment().testFlag(Qt::AlignLeft));
-        QVERIFY(heading->height() >= 2 * heading->fontMetrics().height() - 3);
-        const auto headingStart = heading->mapTo(window.get(), QPoint());
-        const auto buttonStart = open->mapTo(window.get(), QPoint());
-        QVERIFY(std::abs(headingStart.x() - buttonStart.x()) <= 8);
-        QVERIFY(buttonStart.y() >= headingStart.y() + heading->height() - 3);
-        VERIFY_OK(guiqa::inspectLayout(*window));
+        for (const int width : {622, 514}) {
+            window->resize(width, 383);
+            const auto orientation = width == 622 ? Qt::Horizontal : Qt::Vertical;
+            QVERIFY(until([&] { return split->orientation() == orientation; }));
+            QVERIFY2(heading->height() >= 2 * heading->fontMetrics().height() - 3,
+                     qPrintable(QString("Title is %1 px high for a %2 px line").arg(heading->height())
+                                .arg(heading->fontMetrics().height())));
+            QVERIFY(heading->height() >= heading->heightForWidth(heading->width()));
+            QVERIFY(directory->isVisible() && !directory->toPlainText().isEmpty());
+            QVERIFY2(until([&] {
+                const auto headingStart = heading->mapTo(window.get(), QPoint());
+                const auto directoryStart = directory->mapTo(window.get(), QPoint());
+                const auto buttonStart = open->mapTo(window.get(), QPoint());
+                return std::abs(headingStart.x() - buttonStart.x()) <= 8
+                    && directoryStart.y() >= headingStart.y() + heading->height() - 1
+                    && buttonStart.y() >= directoryStart.y() + directory->height() - 3
+                    && (directory->height() >= directory->heightForWidth(directory->width())
+                        || (directory->verticalScrollBar()->isVisible() && directory->verticalScrollBar()->maximum() > 0));
+            }), "The title, complete directory and Open original must be accessible on separate rows");
+            VERIFY_OK(guiqa::inspectLayout(*window));
+        }
         VERIFY_OK(guiqa::saveView(*window, "progress-and-errors-narrow"));
 
         QVERIFY(unreadable.remove());
@@ -618,6 +651,8 @@ private slots:
         QVERIFY(status->text().contains(spanish ? "3 archivos examinados" : "3 files scanned"));
         QVERIFY(status->text().contains(spanish ? "0 coincidencias" : "0 matches"));
         QVERIFY(!errors->isVisible() && !details->isVisible());
+        QCOMPARE(heading->text(), hn::ui("Preview"));
+        QVERIFY(heading->minimumHeight() < 2 * heading->fontMetrics().height() - 3);
     }
 
     void wordAndOfficePreviews()

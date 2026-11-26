@@ -17,6 +17,7 @@
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSaveFile>
 #include <QScrollBar>
 #include <QStackedWidget>
@@ -42,7 +43,7 @@ public:
         setFrameStyle(QFrame::NoFrame);
         setWordWrapMode(QTextOption::WrapAnywhere);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         document()->setDocumentMargin(0);
         viewport()->setAutoFillBackground(false);
         QSizePolicy policy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -66,7 +67,30 @@ public:
         return qMax(fontMetrics().height(), qCeil(height)) + 2;
     }
     QSize sizeHint() const override { return {0, heightForWidth(width())}; }
-    QSize minimumSizeHint() const override { return {0, fontMetrics().height() + 2}; }
+    QSize minimumSizeHint() const override {
+        return {0, qMin(heightForWidth(width()), QPlainTextEdit::minimumSizeHint().height())};
+    }
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QPlainTextEdit::resizeEvent(event);
+        if (event->size().width() != event->oldSize().width()) updateGeometry();
+    }
+};
+
+class PreviewStack final : public QStackedWidget {
+public:
+    using QStackedWidget::QStackedWidget;
+
+    QSize minimumSizeHint() const override
+    {
+        auto hint = QStackedWidget::minimumSizeHint();
+        if (const auto *text = qobject_cast<QTextBrowser *>(currentWidget())) {
+            // The text view can scroll. Leave the hidden PDF toolbar's height
+            // available for the title and directory in a short stacked window.
+            hint.setHeight(text->fontMetrics().lineSpacing() + 2 * text->frameWidth());
+        }
+        return hint;
+    }
 };
 
 // Native clipboards request their own representation when another application
@@ -97,12 +121,20 @@ protected:
 private:
     std::shared_ptr<QTemporaryFile> source;
 };
+}
 
+namespace hn {
 // Keep the full title available to accessibility and the tooltip. Long file names
 // can have no spaces at all, so ordinary word wrapping can lose their extension.
 class PreviewTitle final : public QLabel {
 public:
     using QLabel::QLabel;
+
+    void setTitle(const QString &title)
+    {
+        setText(title);
+        updateMinimumHeight();
+    }
 
     int heightForWidth(int width) const override
     {
@@ -110,9 +142,21 @@ public:
         wrap(layout, width);
         return qMax(fontMetrics().height(), qCeil(layout.boundingRect().height()));
     }
-    QSize minimumSizeHint() const override { return {0, fontMetrics().height()}; }
+    QSize minimumSizeHint() const override { return {0, minimumHeight()}; }
 
 protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QLabel::resizeEvent(event);
+        if (event->size().width() != event->oldSize().width()) updateMinimumHeight();
+    }
+
+    void changeEvent(QEvent *event) override
+    {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::FontChange) updateMinimumHeight();
+    }
+
     void paintEvent(QPaintEvent *) override
     {
         QTextLayout layout(text(), font(), this);
@@ -131,6 +175,10 @@ protected:
     }
 
 private:
+    // A short splitter can compress a height-for-width suggestion to one line.
+    // Reserve exactly the same height used by the two-line painter.
+    void updateMinimumHeight() { setMinimumHeight(heightForWidth(width())); }
+
     static void wrap(QTextLayout &layout, int width)
     {
         QTextOption options;
@@ -148,9 +196,7 @@ private:
         layout.endLayout();
     }
 };
-}
 
-namespace hn {
 class PreviewText final : public QTextBrowser {
 public:
     using QTextBrowser::QTextBrowser;
@@ -261,7 +307,8 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this), trans
     transferStatus->setObjectName("matchTransferStatus");
     transferStatus->setWordWrap(true);
     layout->addWidget(transferStatus);
-    stack = new QStackedWidget(this);
+    stack = new PreviewStack(this);
+    connect(stack, &QStackedWidget::currentChanged, stack, &QWidget::updateGeometry);
     text = new PreviewText(stack);
     text->setObjectName("previewText");
     text->setOpenLinks(false);
@@ -341,7 +388,7 @@ void PreviewPane::updateTitle()
 {
     const QString path = match.value("path").toString();
     if (match.isEmpty()) {
-        name->setText(ui("Preview"));
+        name->setTitle(ui("Preview"));
         name->setToolTip({});
         directory->clear();
         directory->hide();
@@ -349,7 +396,7 @@ void PreviewPane::updateTitle()
         return;
     }
     const auto location = locationLabel(match.value("location").toObject(), match.value("label").toString());
-    name->setText(location + QStringLiteral(" - ") + QFileInfo(path).fileName());
+    name->setTitle(location + QStringLiteral(" - ") + QFileInfo(path).fileName());
     name->setToolTip(path);
     const QString parent = QDir::toNativeSeparators(QFileInfo(path).absolutePath());
     if (directory->toPlainText() != parent) {

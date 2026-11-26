@@ -12,6 +12,7 @@ class QStackedWidget;
 namespace hn {
 class PdfPane;
 class PreviewText;
+class PreviewTitle;
 class PreviewPane : public QWidget {
 public:
     explicit PreviewPane(QWidget *parent = nullptr);
@@ -32,7 +33,7 @@ private:
     QJsonObject match;
     WorkerClient worker;
     WorkerClient transfer;
-    QLabel *name;
+    PreviewTitle *name;
     QLabel *directoryLabel;
     QPlainTextEdit *directory;
     QPushButton *open;

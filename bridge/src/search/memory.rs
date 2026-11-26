@@ -260,7 +260,11 @@ pub(super) fn available_bytes() -> Option<u64> {
     unsafe {
         let host = libc::mach_host_self();
         let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::zeroed();
-        let mut count = libc::HOST_VM_INFO64_COUNT;
+        // The original Mach layout contains both page counts. Later fields in
+        // libc's structure are unavailable on older macOS releases.
+        let original_count = (std::mem::offset_of!(libc::vm_statistics64, decompressions)
+            / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        let mut count = original_count;
         let result = libc::host_statistics64(
             host,
             libc::HOST_VM_INFO64,
@@ -268,7 +272,7 @@ pub(super) fn available_bytes() -> Option<u64> {
             &mut count,
         );
         mach_port_deallocate(libc::mach_task_self(), host);
-        if result != libc::KERN_SUCCESS || count < libc::HOST_VM_INFO64_COUNT {
+        if result != libc::KERN_SUCCESS || count < original_count {
             return None;
         }
         let stats = stats.assume_init();
@@ -276,6 +280,12 @@ pub(super) fn available_bytes() -> Option<u64> {
         let page_size = u64::try_from(libc::sysconf(libc::_SC_PAGESIZE)).ok()?;
         pages.checked_mul(page_size)
     }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn running_kernel_provides_memory_estimate() {
+    assert!(available_bytes().is_some());
 }
 
 #[cfg(windows)]

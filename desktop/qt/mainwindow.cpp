@@ -16,6 +16,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -139,15 +140,19 @@ void MainWindow::buildControls()
     QFont heading = resultsLabel->font();
     heading.setBold(true);
     resultsLabel->setFont(heading);
-    auto *resultHeader = new QHBoxLayout;
-    resultHeader->addWidget(resultsLabel);
+    auto *resultHeader = new QFormLayout;
+    resultHeader->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    resultHeader->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+    resultHeader->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    resultHeader->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
     resultView = new QComboBox(left);
     resultView->setObjectName("resultViewCombo");
+    resultView->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    resultView->setSizePolicy(QSizePolicy::Minimum, resultView->sizePolicy().verticalPolicy());
     resultView->addItem("", "names");
     resultView->addItem("", "paths");
     resultView->addItem("", "tree");
-    resultHeader->addWidget(resultView);
-    resultHeader->addStretch();
+    resultHeader->addRow(resultsLabel, resultView);
     leftLayout->addLayout(resultHeader);
     results = new ResultBrowser(left);
     navigation = new ResultNavigation(results, left);
@@ -462,7 +467,7 @@ void MainWindow::adaptLayout()
         - preview->layout()->contentsMargins().left() + previewGap;
     // Switch before a stacked layout reaches its minimum height, including
     // when a tall window is resized down on a small native screen.
-    const bool compactLandscape = width() >= 560 && width() >= horizontalMinimum && width() > height();
+    const bool compactLandscape = width() >= 560 && width() > horizontalMinimum && width() > height();
     const auto orientation = width() >= 630 || compactLandscape ? Qt::Horizontal : Qt::Vertical;
     if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
     preview->layout()->setContentsMargins(orientation == Qt::Horizontal ? previewGap : 0,

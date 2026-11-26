@@ -19,7 +19,8 @@ from document_fixtures import write_documents
 
 def verify_equivalence(worker, folder, exchange, retained_matches):
     write_documents(folder)
-    (folder / "Needle.unknown").write_bytes(b"Needle\n" + b"plain text\n" * 30000 + b"\0")
+    binary_file = folder / "Needle.unknown"
+    binary_file.write_bytes(b"Needle\n" + b"plain text\n" * 30000 + b"\0")
     (folder / "broken.docx").write_bytes(b"broken")
     (folder / "archive.7z").write_bytes(b"Needle")
     responses = []
@@ -32,7 +33,10 @@ def verify_equivalence(worker, folder, exchange, retained_matches):
             by_file[hit["path"]].append(hit)
         errors = [(e["path"], e["code"]) for e in events if e["type"] == "error"]
         assert len(errors) == 1 and Path(errors[0][0]).name == "broken.docx", errors
-        assert [h["kind"] for h in by_file[str(folder / "Needle.unknown")]] == ["filename"]
+        # Rust and MSYS2 Python can spell the same Windows path with different separators.
+        binary_hits = [hit["kind"] for path, hits in by_file.items()
+                       if binary_file.samefile(path) for hit in hits]
+        assert binary_hits == ["filename"], (binary_file, binary_hits)
         done = events[-1]
         assert done["count"] == sum(map(len, by_file.values())) == 16, done
         assert done["files"] == 16 and done["documentsScanned"] == 13, done
