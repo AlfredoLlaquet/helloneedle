@@ -190,7 +190,7 @@ For a checksum check on FreeBSD, run `sha256 -q helloneedle-1.2.0-FreeBSD-15-amd
 
 ## Build from source
 
-The recipes below build the current source from Git. To build the exact 1.2.0 release with its bundled Rust libraries, open **Assets** on the release page and download the archive whose name starts with `helloneedle-1.2.0-source-` and ends in `.tar.gz`. Its filename includes the tested Git revision. Extract it, open a terminal in the extracted folder, and start at the CMake step for your system. [Hello Needle 1.2.0 release assets](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.2.0)
+The recipes below build from a Git checkout. To build Hello Needle 1.2.0 with the exact Rust libraries used in this release, download the source archive and extract it. Open a terminal in the extracted folder and start at the CMake step for your system. [Download the 1.2.0 source archive](https://github.com/AlfredoLlaquet/helloneedle/releases/download/v1.2.0/helloneedle-1.2.0-source-88e5978aa1ccfad519d620a9456c24a2bfedb33d.tar.gz)
 
 [FreeBSD 14.x and 15.x](#build-and-run-on-freebsd-14x-and-15x) · [Ubuntu](#build-and-run-on-ubuntu) · [Windows](#build-and-run-on-windows) · [macOS](#build-and-run-on-macos)
 

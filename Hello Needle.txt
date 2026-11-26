@@ -209,6 +209,30 @@ For first-launch evidence, compare the captured window’s client area with Hell
 
 Attach the native OS, architecture, Qt version, platform plugin, theme source, scaling, checks, numerical measurements, and screenshot files to each run. Review the rendered images as well as the numerical results. A text field can have sufficient measured contrast while being crowded into half a line. A menu can be readable while displaying a generic Qt placeholder icon. A palette on an offscreen plugin cannot establish the appearance of the native platform. Keep failed evidence and any reproducible defect with the correction until it passes on the affected platform. The Actions run also records package hashes and the source archive. [Build and appearance runs](https://github.com/AlfredoLlaquet/helloneedle/actions)
 
+### Native verification for 1.2.0
+
+The release build used revision `88e5978aa1ccfad519d620a9456c24a2bfedb33d`. The offline source archive passed 81 Rust tests. Installed-package tests verified 100,001 matches with serial and parallel searches, including the final match, and retained all 490 file errors. [Offline source and Rust tests](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139658978748) · [Installed search tests](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139659395956)
+
+Each desktop passed 12 GUI scenarios covering English and Spanish, light and dark appearances, 100% and 150% scaling, and navigation through large result sets. The counts exclude test setup and cleanup.
+
+| Desktop tested | Qt and platform plugin | Results and screenshots |
+| --- | --- | --- |
+| FreeBSD 14.4-RELEASE, amd64 | 6.11.3, XCB | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15082623247) |
+| FreeBSD 15.1-RELEASE-p6, amd64 | 6.11.3, XCB | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15082293818) |
+| Ubuntu 24.04.5 LTS, amd64 | 6.4.2, XCB | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15082558876) |
+| Windows Server 2025 Version 24H2, x64 | 6.12.0, Windows | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15082924689) |
+| Windows 11 Version 25H2, x64 application on Arm | 6.12.0, Windows | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15082979635) |
+| macOS Sequoia (15.7.9), Intel | 6.12.0, Cocoa | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15083229001) |
+| macOS Golden Gate (27.0.1), Apple Silicon | 6.12.0, Cocoa | [121 checks](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/artifacts/15083467254) |
+
+At 150% scaling, the Spanish controls and long preview filename fit in the compact window. The preview displayed the selected file’s directory below its title. The PDF test located the painted highlight after zooming and checked that the reader could scroll away from it. The FreeBSD test images displayed a fallback square for the thread emoji. The preview retained its Unicode text and correctly selected the second occurrence that followed the emoji.
+
+On Windows Server and Windows 11 on Arm, the installer tests launched the installed program, repaired the installation in Spanish and uninstalled it. [Windows Server installation](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139663025496) · [Windows 11 on Arm installation](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139663025536)
+
+A clean FreeBSD 14.5 machine installed the package built on FreeBSD 14.4. Clean Intel and Apple Silicon Macs each installed the same Universal disk image and ran the application natively. [FreeBSD 14.5 installation](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139661977214) · [Intel installation](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139669362815) · [Apple Silicon installation](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45745059210/job/139669362775)
+
+The published tag and assets are immutable. GitHub verified the files against the tested packages and signed release checksum list. [Hello Needle 1.2.0 release](https://github.com/AlfredoLlaquet/helloneedle/releases/tag/v1.2.0) · [Release verification and publication](https://github.com/AlfredoLlaquet/helloneedle/actions/runs/45748462852)
+
 ### Native verification for 1.1.0
 
 The 1.1.0 release worker on Debian 13 with Rust 1.85 found all ten expected matches in a 1.13 GiB image-heavy HTML export using under 10 MiB of resident memory. An 80 MiB text-only paragraph and a 120,000-row table both yielded their final match. A sparse 1 TiB test document with more than 1 GiB of printable text at the start exceeded the memory budget during the read. The worker reported the file and found the match in the next document.
