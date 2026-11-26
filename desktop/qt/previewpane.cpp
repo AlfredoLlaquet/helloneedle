@@ -37,48 +37,6 @@
 namespace {
 constexpr qint64 partSize = 128 * 1024; // UTF-16 units, per interactive view
 
-class DirectoryLine final : public QPlainTextEdit {
-public:
-    explicit DirectoryLine(QWidget *parent) : QPlainTextEdit(parent) {
-        setReadOnly(true);
-        setFrameStyle(QFrame::NoFrame);
-        setWordWrapMode(QTextOption::WrapAnywhere);
-        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        document()->setDocumentMargin(0);
-        viewport()->setAutoFillBackground(false);
-        // The preferred height follows the width, while a short pane can scroll
-        // the path through one full line. Qt treats widget height-for-width
-        // as a minimum during layout, so report wrapping via sizeHint instead.
-        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    }
-    int heightForWidth(int width) const override {
-        QTextLayout layout(toPlainText(), font(), this);
-        QTextOption options;
-        options.setWrapMode(QTextOption::WrapAnywhere);
-        layout.setTextOption(options);
-        layout.beginLayout();
-        qreal height = 0;
-        for (;;) {
-            auto line = layout.createLine();
-            if (!line.isValid()) break;
-            line.setLineWidth(qMax(1, width - 2));
-            height += line.height();
-        }
-        layout.endLayout();
-        return qMax(fontMetrics().height(), qCeil(height)) + 2;
-    }
-    QSize sizeHint() const override { return {0, heightForWidth(width())}; }
-    QSize minimumSizeHint() const override {
-        return {0, fontMetrics().height() + 2};
-    }
-protected:
-    void resizeEvent(QResizeEvent *event) override {
-        QPlainTextEdit::resizeEvent(event);
-        if (event->size().width() != event->oldSize().width()) updateGeometry();
-    }
-};
-
 class PreviewStack final : public QStackedWidget {
 public:
     using QStackedWidget::QStackedWidget;
@@ -126,6 +84,64 @@ private:
 }
 
 namespace hn {
+class DirectoryLine final : public QPlainTextEdit {
+public:
+    explicit DirectoryLine(QWidget *parent) : QPlainTextEdit(parent) {
+        setReadOnly(true);
+        setFrameStyle(QFrame::NoFrame);
+        setWordWrapMode(QTextOption::WrapAnywhere);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        document()->setDocumentMargin(0);
+        viewport()->setAutoFillBackground(false);
+        // The preferred height follows the width, while a short pane can scroll
+        // the path through one full line. Qt treats widget height-for-width
+        // as a minimum during layout, so report wrapping via sizeHint instead.
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    }
+    void setInsideScrollArea(bool inside) {
+        insideScrollArea = inside;
+        setVerticalScrollBarPolicy(inside ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+        if (inside) verticalScrollBar()->setValue(0);
+        updateGeometry();
+    }
+    int lineHeight() const { return fontMetrics().height() + 2; }
+    int heightForWidth(int width) const override {
+        QTextLayout layout(toPlainText(), font(), this);
+        QTextOption options;
+        options.setWrapMode(QTextOption::WrapAnywhere);
+        layout.setTextOption(options);
+        layout.beginLayout();
+        qreal height = 0;
+        for (;;) {
+            auto line = layout.createLine();
+            if (!line.isValid()) break;
+            line.setLineWidth(qMax(1, width - 2));
+            height += line.height();
+        }
+        layout.endLayout();
+        return qMax(fontMetrics().height(), qCeil(height)) + 2;
+    }
+    QSize sizeHint() const override {
+        if (!insideScrollArea) return {0, heightForWidth(width())};
+        // Include native font leading and line breaks within directory names.
+        qreal blocks = 0;
+        for (auto block = document()->begin(); block.isValid(); block = block.next())
+            blocks += blockBoundingRect(block).height();
+        return {0, qMax(heightForWidth(viewport()->width()), qCeil(blocks) + 2)};
+    }
+    QSize minimumSizeHint() const override {
+        return insideScrollArea ? sizeHint() : QSize(0, lineHeight());
+    }
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QPlainTextEdit::resizeEvent(event);
+        if (event->size().width() != event->oldSize().width()) updateGeometry();
+    }
+private:
+    bool insideScrollArea = false;
+};
+
 // Keep the full title available to accessibility and the tooltip. Long file names
 // can have no spaces at all, so ordinary word wrapping can lose their extension.
 class PreviewTitle final : public QLabel {
@@ -352,9 +368,20 @@ int PreviewPane::heightForWidth(int width) const
     return area ? layout()->minimumHeightForWidth(width) : QWidget::heightForWidth(width);
 }
 
+QSize PreviewPane::minimumViewportSizeHint() const
+{
+    auto hint = minimumSizeHint();
+    // Long paths belong to the scrollable content. Reserve one readable path
+    // line in the window's minimum so the window still fits small desktops.
+    if (!directory->isHidden())
+        hint.rheight() -= qMax(0, directory->minimumSizeHint().height() - directory->lineHeight());
+    return hint;
+}
+
 void PreviewPane::setScrollArea(QScrollArea *scroll)
 {
     area = scroll;
+    directory->setInsideScrollArea(scroll != nullptr);
     layout()->setSizeConstraint(scroll ? QLayout::SetMinimumSize : QLayout::SetDefaultConstraint);
     if (!scroll) setMinimumSize(0, 0);
 }

@@ -42,7 +42,8 @@ public:
 
     QSize minimumSizeHint() const override
     {
-        return widget() ? widget()->minimumSizeHint() : QScrollArea::minimumSizeHint();
+        return widget() ? static_cast<hn::PreviewPane *>(widget())->minimumViewportSizeHint()
+                        : QScrollArea::minimumSizeHint();
     }
 };
 }

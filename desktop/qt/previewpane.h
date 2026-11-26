@@ -5,12 +5,12 @@
 #include "workerclient.h"
 
 class QLabel;
-class QPlainTextEdit;
 class QPushButton;
 class QScrollArea;
 class QStackedWidget;
 
 namespace hn {
+class DirectoryLine;
 class PdfPane;
 class PreviewText;
 class PreviewTitle;
@@ -18,6 +18,7 @@ class PreviewPane : public QWidget {
 public:
     explicit PreviewPane(QWidget *parent = nullptr);
     int heightForWidth(int width) const override;
+    QSize minimumViewportSizeHint() const;
     void setScrollArea(QScrollArea *scroll);
     void clear();
     void showMatch(const QJsonObject &event);
@@ -39,7 +40,7 @@ private:
     QScrollArea *area = nullptr;
     PreviewTitle *name;
     QLabel *directoryLabel;
-    QPlainTextEdit *directory;
+    DirectoryLine *directory;
     QPushButton *open;
     QPushButton *toggle;
     QPushButton *copy;

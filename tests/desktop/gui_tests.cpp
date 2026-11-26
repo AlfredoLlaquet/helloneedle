@@ -673,6 +673,11 @@ private slots:
                 if (orientation == Qt::Vertical) {
                     const auto caret = viewport->mapTo(area->widget(), caretRect.center());
                     area->ensureVisible(caret.x(), caret.y(), 1, caretRect.height() / 2 + 1);
+                    // The outer pane scrolls the complete directory. Its first
+                    // and last characters both fit inside the directory field.
+                    const QTextCursor first(directory->document());
+                    if (!viewport->rect().adjusted(-2, -2, 2, 2).contains(directory->cursorRect(first)))
+                        return false;
                 }
                 const QRect visibleCaret(viewport->mapTo(visiblePane, caretRect.topLeft()), caretRect.size());
                 return std::abs(headingRect.left() - buttonRect.left()) <= 8
@@ -683,7 +688,8 @@ private slots:
             if (!readable) {
                 qWarning() << "Preview at width" << width << "title" << headingRect << "directory viewport" << pathRect
                            << "button" << buttonRect << "end caret inside viewport" << caretRect
-                           << "scroll range" << directory->verticalScrollBar()->maximum();
+                           << "scroll position" << directory->verticalScrollBar()->value()
+                           << "of" << directory->verticalScrollBar()->maximum();
                 VERIFY_OK(guiqa::saveView(*window, QString("preview-geometry-%1").arg(width)));
             }
             QVERIFY2(readable, "The last directory character must be readable between the title and Open original");
