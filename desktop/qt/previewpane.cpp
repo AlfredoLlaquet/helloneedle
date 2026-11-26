@@ -102,7 +102,10 @@ public:
     void setInsideScrollArea(bool inside) {
         insideScrollArea = inside;
         setVerticalScrollBarPolicy(inside ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
-        if (inside) verticalScrollBar()->setValue(0);
+        if (inside) {
+            horizontalScrollBar()->setValue(0);
+            verticalScrollBar()->setValue(0);
+        }
         updateGeometry();
     }
     int lineHeight() const { return fontMetrics().height() + 2; }
