@@ -453,9 +453,18 @@ void MainWindow::refreshStatus()
 void MainWindow::adaptLayout()
 {
     if (!preview) return;
-    const auto orientation = width() < 630 ? Qt::Vertical : Qt::Horizontal;
-    if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
+    // A scaled 1024×768 desktop can be both narrow and too short for two
+    // stacked panes. Use its horizontal space if both panes fit side by side.
     constexpr int previewGap = 24;
+    const auto margins = centralWidget()->layout()->contentsMargins();
+    const int horizontalMinimum = margins.left() + margins.right() + splitter->handleWidth()
+        + splitter->widget(0)->minimumSizeHint().width() + preview->minimumSizeHint().width()
+        - preview->layout()->contentsMargins().left() + previewGap;
+    // Switch before a stacked layout reaches its minimum height, including
+    // when a tall window is resized down on a small native screen.
+    const bool compactLandscape = width() >= 560 && width() >= horizontalMinimum && width() > height();
+    const auto orientation = width() >= 630 || compactLandscape ? Qt::Horizontal : Qt::Vertical;
+    if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
     preview->layout()->setContentsMargins(orientation == Qt::Horizontal ? previewGap : 0,
                                          orientation == Qt::Vertical ? previewGap : 0, 0, 0);
 }

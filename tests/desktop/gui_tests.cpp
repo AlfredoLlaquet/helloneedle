@@ -478,18 +478,26 @@ private slots:
         panel.setMessage(hn::ui("Ready to search."), 0);
         QCOMPARE(panel.minimumHeight(), initialMinimum);
 
-        // A 1024×768 Windows desktop at 150% can leave a 683×480 work area.
-        // Measure the entire native frame, including the platform's title bar.
-        const QSize area(683, 480);
-        hn::MainWindow fresh;
-        fresh.resize(622, 408);
-        fresh.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&fresh));
-        const auto frame = fresh.frameGeometry();
-        QVERIFY2(frame.width() <= area.width() + 4 && frame.height() <= area.height() + 4,
-                 qPrintable(QString("Compact frame %1x%2 exceeds the 683x480 work area")
-                            .arg(frame.width()).arg(frame.height())));
-        VERIFY_OK(guiqa::inspectLayout(fresh));
+        // At 150%, native Windows and Cocoa runners have 683×480 and 683×451
+        // work areas respectively. Include the title bar in the measurements.
+        for (int height : {480, 451}) {
+            const QSize area(683, height);
+            hn::MainWindow fresh;
+            fresh.resize(622, qRound(area.height() * .85));
+            fresh.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&fresh));
+            const auto frame = fresh.frameGeometry();
+            QVERIFY2(frame.width() <= area.width() + 4 && frame.height() <= area.height() + 4,
+                     qPrintable(QString("Compact frame %1x%2 exceeds the 683x%3 work area")
+                                .arg(frame.width()).arg(frame.height()).arg(height)));
+            auto *split = fresh.findChild<QSplitter *>("resultSplitter");
+            QVERIFY(split);
+            QVERIFY2(split->orientation() == Qt::Horizontal,
+                     qPrintable(QString("Expected side-by-side panes at %1x%2, minimum pane widths %3 + %4")
+                         .arg(fresh.width()).arg(fresh.height()).arg(split->widget(0)->minimumSizeHint().width())
+                         .arg(split->widget(1)->minimumSizeHint().width())));
+            VERIFY_OK(guiqa::inspectLayout(fresh));
+        }
     }
 
     void unicodeAndRepeat()
@@ -727,11 +735,16 @@ private slots:
         }
         QVERIFY2(bottom >= top, "Missing painted PDF match after zooming");
         const int hitY = qRound((top + bottom) * 0.5 * image->height() / raster.height());
-        const int target = qBound(bar->minimum(), hitY - scroller->viewport()->rect().center().y(), bar->maximum());
+        // Showing a scrollbar after zoom changes the viewport midpoint on some desktops.
+        auto *viewport = scroller->viewport();
+        const auto verticalOffset = [&] {
+            return image->mapTo(viewport, QPoint(0, hitY)).y() - viewport->rect().center().y();
+        };
+        QVERIFY2(until([&] { return std::abs(verticalOffset()) <= 4; }),
+                 qPrintable(QString("Painted PDF match offset from viewport center: %1").arg(verticalOffset())));
+        const int target = hitY - viewport->rect().center().y();
         QVERIFY2(target > bar->minimum() + 3 && target < bar->maximum() - 3,
                  "The example must allow centering without clamping at a page edge");
-        QVERIFY2(until([&] { return std::abs(bar->value() - target) <= 4; }),
-                 qPrintable(QString("PDF scroll %1; centered value %2").arg(bar->value()).arg(target)));
         VERIFY_OK(guiqa::saveView(*window, "pdf-zoomed-centered"));
         bar->setValue(bar->minimum());
         QTest::qWait(150);
