@@ -506,6 +506,22 @@ private slots:
         QVERIFY(until([&] { return image->isVisible() && !image->pixmap().isNull(); }));
         QCOMPARE(control<QSplitter>("resultSplitter")->orientation(), Qt::Horizontal);
         QVERIFY(window->frameGeometry().width() <= 687 && window->frameGeometry().height() <= 455);
+        auto *area = control<QScrollArea>("previewScrollArea");
+        auto *fit = control<QAbstractButton>("fitPageButton");
+        QVERIFY(area && fit);
+        auto boundsInPreview = [area](QWidget *w) {
+            return QWidgetItem(w).geometry().translated(w->parentWidget()->mapTo(area->viewport(), QPoint()));
+        };
+        const bool complete = until([&] {
+            const QRect visible = area->viewport()->rect().adjusted(-1, -1, 1, 1);
+            return visible.contains(boundsInPreview(image)) && visible.contains(boundsInPreview(fit));
+        });
+        if (!complete) {
+            qWarning() << "Visible preview" << area->viewport()->rect() << "page" << boundsInPreview(image)
+                       << "Fit button" << boundsInPreview(fit);
+            VERIFY_OK(guiqa::saveView(*window, "compact-fit-geometry"));
+        }
+        QVERIFY2(complete, "Fit must show the full page and its button in the visible preview");
         for (const auto *id : {"openOriginalButton", "pdfTextButton", "copyMatchButton"}) {
             auto *button = control<QAbstractButton>(id);
             QVERIFY(button && button->isVisible());

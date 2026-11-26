@@ -49,6 +49,16 @@ public:
     }
 };
 
+class PreviewContents final : public QWidget {
+public:
+    int heightForWidth(int width) const override
+    {
+        // A scroll area treats this height as required. The page must shrink
+        // to its visible viewport before the outer pane starts to scroll.
+        return layout()->minimumHeightForWidth(width);
+    }
+};
+
 class DirectoryLine final : public QPlainTextEdit {
 public:
     explicit DirectoryLine(QWidget *parent) : QPlainTextEdit(parent) {
@@ -276,7 +286,7 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this), trans
     area->setFrameShape(QFrame::NoFrame);
     area->setWidgetResizable(true);
     area->setFocusPolicy(Qt::NoFocus);
-    auto *contents = new QWidget;
+    auto *contents = new PreviewContents;
     auto *layout = new QVBoxLayout(contents);
     layout->setSizeConstraint(QLayout::SetMinimumSize);
     layout->setContentsMargins(0, 0, 0, 0);
