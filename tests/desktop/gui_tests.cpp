@@ -50,6 +50,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUrl>
+#include <QWidgetItem>
 
 #include <cstdio>
 #include <functional>
@@ -631,17 +632,32 @@ private slots:
                      qPrintable(QString("Title is %1 px high for a %2 px line").arg(heading->height())
                                 .arg(heading->fontMetrics().height())));
             QVERIFY(heading->height() >= heading->heightForWidth(heading->width()));
-            QVERIFY(directory->isVisible() && !directory->toPlainText().isEmpty());
-            QVERIFY2(until([&] {
-                const auto headingStart = heading->mapTo(window.get(), QPoint());
-                const auto directoryStart = directory->mapTo(window.get(), QPoint());
-                const auto buttonStart = open->mapTo(window.get(), QPoint());
-                return std::abs(headingStart.x() - buttonStart.x()) <= 8
-                    && directoryStart.y() >= headingStart.y() + heading->height() - 1
-                    && buttonStart.y() >= directoryStart.y() + directory->height() - 3
-                    && (directory->height() >= directory->heightForWidth(directory->width())
-                        || (directory->verticalScrollBar()->isVisible() && directory->verticalScrollBar()->maximum() > 0));
-            }), "The title, complete directory and Open original must be accessible on separate rows");
+            QVERIFY(directory->isVisible());
+            QCOMPARE(QDir(directory->toPlainText()).canonicalPath(), docs.canonicalPath());
+            directory->moveCursor(QTextCursor::End);
+            directory->ensureCursorVisible();
+            QRect headingRect, pathRect, buttonRect, caretRect;
+            const bool readable = until([&] {
+                headingRect = QRect(heading->mapTo(window.get(), QPoint()), heading->size());
+                auto *viewport = directory->viewport();
+                pathRect = QRect(viewport->mapTo(window.get(), QPoint()), viewport->size());
+                // Qt's layout rectangle excludes a native button's transparent shadow margins.
+                buttonRect = QWidgetItem(open).geometry().translated(open->parentWidget()->mapTo(window.get(), QPoint()));
+                caretRect = directory->cursorRect();
+                return std::abs(headingRect.left() - buttonRect.left()) <= 8
+                    && pathRect.top() >= headingRect.bottom() && buttonRect.top() >= pathRect.bottom() - 2
+                    && viewport->rect().adjusted(-2, -2, 2, 2).contains(caretRect);
+            });
+            if (!readable) {
+                qWarning() << "Preview at width" << width << "title" << headingRect << "directory viewport" << pathRect
+                           << "button" << buttonRect << "end caret inside viewport" << caretRect
+                           << "scroll range" << directory->verticalScrollBar()->maximum();
+                VERIFY_OK(guiqa::saveView(*window, QString("preview-geometry-%1").arg(width)));
+            }
+            QVERIFY2(readable, "The last directory character must be readable between the title and Open original");
+            directory->selectAll();
+            QCOMPARE(directory->textCursor().selectedText(), directory->toPlainText());
+            directory->moveCursor(QTextCursor::Start);
             VERIFY_OK(guiqa::inspectLayout(*window));
         }
         VERIFY_OK(guiqa::saveView(*window, "progress-and-errors-narrow"));

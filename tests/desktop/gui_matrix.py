@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -96,6 +97,30 @@ def hosted_theme(appearance):
     yield
 
 
+def run_gui(command, env, log_path):
+    cocoa = sys.platform == "darwin" and env["QT_QPA_PLATFORM"] == "cocoa"
+    with log_path.open("w", encoding="utf-8") as log, subprocess.Popen(
+            command, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=cocoa) as process:
+        try:
+            return process.wait(timeout=135)
+        except subprocess.TimeoutExpired:
+            if cocoa:
+                # Keep the live thread stacks before stopping the tester and its workers.
+                try:
+                    sample = ["/usr/bin/sample", str(process.pid), "1", "-file", str(log_path.with_suffix(".sample.txt"))]
+                    subprocess.run(sample, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=5)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    print(f"Could not sample the stalled tester: {exc}", file=log)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # The group finished during sampling.
+            else:
+                process.kill()
+            print("\nNative GUI process timed out.", file=log)
+            return 124
+
+
 def run_case(tester, worker, docs, settings, directory, spec, plugin):
     name, language, appearance, factor, slots = spec
     directory.mkdir(parents=True, exist_ok=True)
@@ -114,17 +139,10 @@ def run_case(tester, worker, docs, settings, directory, spec, plugin):
     result_file = directory / "results.xml"
     cmd = [str(tester), *slots, "-o", f"{result_file},junitxml", "-o", "-,txt"]
     print(f"Testing {name} using {plugin}", flush=True)
-    try:
-        with hosted_theme(appearance):
-            proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  encoding="utf-8", errors="replace", timeout=135)
-        log, code = proc.stdout, proc.returncode
-    except subprocess.TimeoutExpired as exc:
-        log = exc.stdout or b""
-        if isinstance(log, bytes):
-            log = log.decode("utf-8", "replace")
-        log += "\nNative GUI scenario timed out.\n"
-        code = 124
+    log_path = directory / "test.log"
+    with hosted_theme(appearance):
+        code = run_gui(cmd, env, log_path)
+    log = log_path.read_text(encoding="utf-8", errors="replace")
     cases = []
     if result_file.exists():
         try:
@@ -138,7 +156,7 @@ def run_case(tester, worker, docs, settings, directory, spec, plugin):
                 if test.find("skipped") is not None:
                     status = "skipped"
                 cases.append({"name": test.get("name"), "result": status})
-    (directory / "test.log").write_text(log, encoding="utf-8")
+    log_path.write_text(log, encoding="utf-8")
     if code:
         print(log, flush=True)
     evidence = directory / "appearance.json"
@@ -168,7 +186,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     cases = []
     review = None
-    with tempfile.TemporaryDirectory(prefix="helloneedle-gui-") as temp:
+    progress_path = output / "completed-scenarios.jsonl"
+    with tempfile.TemporaryDirectory(prefix="helloneedle-gui-") as temp, progress_path.open("w", encoding="utf-8") as progress:
         # Windows TEMP can spell the user profile with an 8.3 alias. The
         # native dialog returns the long path when a folder is selected.
         scratch = Path(temp).resolve(strict=True)
@@ -192,17 +211,22 @@ def main():
             for produced in directory.iterdir():
                 shutil.copy2(produced, destination / produced.name)
             cases.append(case)
+            print(json.dumps(case, ensure_ascii=False), file=progress, flush=True)
         unchanged = before == digest()
         if not args.scenario:
             current = scratch / "screens"
-            review = subprocess.run([str(tester), "--make-review", str(current)],
-                                    env={**os.environ, "QT_QPA_PLATFORM": plugin}).returncode == 0
+            # An unresponsive desktop can also hang the new process that composes the review sheet.
+            review = False
+            if all(case["returnCode"] != 124 for case in cases):
+                review = run_gui([str(tester), "--make-review", str(current)],
+                                 {**os.environ, "QT_QPA_PLATFORM": plugin}, output / "review.log") == 0
             if (current / "review.png").exists():
                 shutil.copy2(current / "review.png", output / "review.png")
     manifest = {"os": platform.platform(), "platformPlugin": plugin, "nativeAcceptance": not args.supplementary_offscreen,
                 "fixturesUnchanged": unchanged,
                 "reviewSheetComplete": review, "scenarios": cases}
     (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    progress_path.unlink()
     failures = [case["scenario"] for case in cases if case["returnCode"]]
     print(f"GUI matrix: {len(cases) - len(failures)}/{len(cases)} scenarios passed. "
           f"{sum(len(c['screenshots']) for c in cases)} screenshots. Evidence: {output}", flush=True)
