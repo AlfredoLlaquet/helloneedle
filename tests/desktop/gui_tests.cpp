@@ -621,13 +621,16 @@ private slots:
         auto *directory = control<QPlainTextEdit>("previewDirectory");
         auto *open = control<QAbstractButton>("openOriginalButton");
         auto *split = control<QSplitter>("resultSplitter");
-        QVERIFY(heading && directory && open && open->isEnabled() && split);
+        auto *area = control<QScrollArea>("previewScrollArea");
+        QVERIFY(heading && directory && open && open->isEnabled() && split && area);
         QCOMPARE(heading->text(), (spanish ? QString("Párrafo 2 - ") : QString("Paragraph 2 - ")) + title);
         QVERIFY(heading->wordWrap() && heading->alignment().testFlag(Qt::AlignLeft));
         for (const int width : {622, 514}) {
             window->resize(width, 383);
             const auto orientation = width == 622 ? Qt::Horizontal : Qt::Vertical;
             QVERIFY(until([&] { return split->orientation() == orientation; }));
+            // Also exercise desktops whose window manager cannot grow the stacked window.
+            if (orientation == Qt::Vertical) window->setFixedHeight(383);
             QVERIFY2(heading->height() >= 2 * heading->fontMetrics().height() - 3,
                      qPrintable(QString("Title is %1 px high for a %2 px line").arg(heading->height())
                                 .arg(heading->fontMetrics().height())));
@@ -644,8 +647,12 @@ private slots:
                 // Qt's layout rectangle excludes a native button's transparent shadow margins.
                 buttonRect = QWidgetItem(open).geometry().translated(open->parentWidget()->mapTo(window.get(), QPoint()));
                 caretRect = directory->cursorRect();
+                const auto caret = viewport->mapTo(area->widget(), caretRect.center());
+                area->ensureVisible(caret.x(), caret.y(), 1, caretRect.height() / 2 + 1);
+                const QRect visibleCaret(viewport->mapTo(area->viewport(), caretRect.topLeft()), caretRect.size());
                 return std::abs(headingRect.left() - buttonRect.left()) <= 8
                     && pathRect.top() >= headingRect.bottom() && buttonRect.top() >= pathRect.bottom() - 2
+                    && area->viewport()->rect().adjusted(-2, -2, 2, 2).contains(visibleCaret)
                     && viewport->rect().adjusted(-2, -2, 2, 2).contains(caretRect);
             });
             if (!readable) {
@@ -658,6 +665,10 @@ private slots:
             directory->selectAll();
             QCOMPARE(directory->textCursor().selectedText(), directory->toPlainText());
             directory->moveCursor(QTextCursor::Start);
+            area->ensureWidgetVisible(open, 0, 0);
+            const auto action = QWidgetItem(open).geometry().translated(open->parentWidget()->mapTo(area->viewport(), QPoint()));
+            QVERIFY2(!action.isEmpty() && area->viewport()->rect().contains(action), "Open original must be reachable");
+            area->verticalScrollBar()->setValue(0);
             VERIFY_OK(guiqa::inspectLayout(*window));
         }
         VERIFY_OK(guiqa::saveView(*window, "progress-and-errors-narrow"));

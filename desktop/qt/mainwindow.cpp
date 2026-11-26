@@ -153,10 +153,12 @@ void MainWindow::buildControls()
     resultView->addItem("", "paths");
     resultView->addItem("", "tree");
     resultHeader->addRow(resultsLabel, resultView);
-    leftLayout->addLayout(resultHeader);
+    resultControls = new QBoxLayout(QBoxLayout::TopToBottom);
+    resultControls->addLayout(resultHeader);
+    leftLayout->addLayout(resultControls);
     results = new ResultBrowser(left);
     navigation = new ResultNavigation(results, left);
-    leftLayout->addWidget(navigation);
+    resultControls->addWidget(navigation);
     leftLayout->addWidget(results);
     preview = new PreviewPane(splitter);
     splitter->addWidget(left);
@@ -462,13 +464,20 @@ void MainWindow::adaptLayout()
     // stacked panes. Use its horizontal space if both panes fit side by side.
     constexpr int previewGap = 24;
     const auto margins = centralWidget()->layout()->contentsMargins();
+    const auto *selector = resultControls->itemAt(0);
+    const int listMinimum = qMax(results->minimumSizeHint().width(),
+                                 qMax(selector->minimumSize().width(), navigation->minimumSizeHint().width()));
     const int horizontalMinimum = margins.left() + margins.right() + splitter->handleWidth()
-        + splitter->widget(0)->minimumSizeHint().width() + preview->minimumSizeHint().width()
+        + listMinimum + preview->minimumSizeHint().width()
         - preview->layout()->contentsMargins().left() + previewGap;
     // Switch before a stacked layout reaches its minimum height, including
     // when a tall window is resized down on a small native screen.
     const bool compactLandscape = width() >= 560 && width() > horizontalMinimum && width() > height();
     const auto orientation = width() >= 630 || compactLandscape ? Qt::Horizontal : Qt::Vertical;
+    const auto controlsWidth = selector->sizeHint().width() + navigation->sizeHint().width()
+        + qMax(0, resultControls->spacing());
+    const bool oneRow = orientation == Qt::Vertical && width() - margins.left() - margins.right() >= controlsWidth;
+    resultControls->setDirection(oneRow ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
     if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
     preview->layout()->setContentsMargins(orientation == Qt::Horizontal ? previewGap : 0,
                                          orientation == Qt::Vertical ? previewGap : 0, 0, 0);

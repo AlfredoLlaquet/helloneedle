@@ -19,6 +19,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSaveFile>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QTextBrowser>
@@ -36,6 +37,18 @@
 namespace {
 constexpr qint64 partSize = 128 * 1024; // UTF-16 units, per interactive view
 
+class PreviewViewport final : public QScrollArea {
+public:
+    using QScrollArea::QScrollArea;
+
+    QSize minimumSizeHint() const override
+    {
+        // Ask the splitter for enough room to show every control. If the window
+        // manager grants less, the reader can scroll the complete pane.
+        return widget() ? widget()->minimumSizeHint() : QScrollArea::minimumSizeHint();
+    }
+};
+
 class DirectoryLine final : public QPlainTextEdit {
 public:
     explicit DirectoryLine(QWidget *parent) : QPlainTextEdit(parent) {
@@ -46,9 +59,10 @@ public:
         setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         document()->setDocumentMargin(0);
         viewport()->setAutoFillBackground(false);
-        QSizePolicy policy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        policy.setHeightForWidth(true);
-        setSizePolicy(policy);
+        // The preferred height follows the width, while a short pane can scroll
+        // the path through one full line. Qt treats widget height-for-width
+        // as a minimum during layout, so report wrapping via sizeHint instead.
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     }
     int heightForWidth(int width) const override {
         QTextLayout layout(toPlainText(), font(), this);
@@ -68,7 +82,7 @@ public:
     }
     QSize sizeHint() const override { return {0, heightForWidth(width())}; }
     QSize minimumSizeHint() const override {
-        return {0, qMin(heightForWidth(width()), QPlainTextEdit::minimumSizeHint().height())};
+        return {0, fontMetrics().height() + 2};
     }
 protected:
     void resizeEvent(QResizeEvent *event) override {
@@ -255,9 +269,20 @@ private:
 PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this), transfer(this)
 {
     setObjectName("previewPane");
-    auto *layout = new QVBoxLayout(this);
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    area = new PreviewViewport(this);
+    area->setObjectName("previewScrollArea");
+    area->setFrameShape(QFrame::NoFrame);
+    area->setWidgetResizable(true);
+    area->setFocusPolicy(Qt::NoFocus);
+    auto *contents = new QWidget;
+    auto *layout = new QVBoxLayout(contents);
+    layout->setSizeConstraint(QLayout::SetMinimumSize);
     layout->setContentsMargins(0, 0, 0, 0);
-    name = new PreviewTitle(this);
+    area->setWidget(contents);
+    outer->addWidget(area);
+    name = new PreviewTitle(contents);
     name->setObjectName("previewTitle");
     name->setTextFormat(Qt::PlainText);
     name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -268,32 +293,32 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this), trans
     name->setFont(heading);
     layout->addWidget(name);
     auto *directoryRow = new QHBoxLayout;
-    directoryLabel = new QLabel(this);
+    directoryLabel = new QLabel(contents);
     directoryLabel->setObjectName("previewDirectoryLabel");
     directoryRow->addWidget(directoryLabel, 0, Qt::AlignTop);
-    directory = new DirectoryLine(this);
+    directory = new DirectoryLine(contents);
     directory->setObjectName("previewDirectory");
     directoryLabel->setBuddy(directory);
     directoryRow->addWidget(directory, 1);
     layout->addLayout(directoryRow);
     auto *bar = new QHBoxLayout;
-    open = new QPushButton(this);
+    open = new QPushButton(contents);
     open->setObjectName("openOriginalButton");
     setButtonIcon(open, ButtonIcon::OpenOriginal);
     bar->addWidget(open);
-    toggle = new QPushButton(this);
+    toggle = new QPushButton(contents);
     toggle->setObjectName("pdfTextButton");
     bar->addWidget(toggle);
-    copy = new QPushButton(this);
+    copy = new QPushButton(contents);
     copy->setObjectName("copyMatchButton");
     bar->addWidget(copy);
     bar->addStretch();
     layout->addLayout(bar);
     auto *parts = new QHBoxLayout;
-    previousPart = new QPushButton(this);
-    nextPart = new QPushButton(this);
-    partLabel = new QLabel(this);
-    save = new QPushButton(this);
+    previousPart = new QPushButton(contents);
+    nextPart = new QPushButton(contents);
+    partLabel = new QLabel(contents);
+    save = new QPushButton(contents);
     previousPart->setObjectName("previousPreviewPart");
     nextPart->setObjectName("nextPreviewPart");
     save->setObjectName("saveMatchButton");
@@ -303,11 +328,11 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this), trans
     parts->addWidget(save);
     parts->addStretch();
     layout->addLayout(parts);
-    transferStatus = new QLabel(this);
+    transferStatus = new QLabel(contents);
     transferStatus->setObjectName("matchTransferStatus");
     transferStatus->setWordWrap(true);
     layout->addWidget(transferStatus);
-    stack = new PreviewStack(this);
+    stack = new PreviewStack(contents);
     connect(stack, &QStackedWidget::currentChanged, stack, &QWidget::updateGeometry);
     text = new PreviewText(stack);
     text->setObjectName("previewText");
@@ -346,6 +371,8 @@ PreviewPane::PreviewPane(QWidget *parent) : QWidget(parent), worker(this), trans
 void PreviewPane::clear()
 {
     worker.stop();
+    area->horizontalScrollBar()->setValue(0);
+    area->verticalScrollBar()->setValue(0);
     pdf->clear();
     hasPdf = false;
     received = false;

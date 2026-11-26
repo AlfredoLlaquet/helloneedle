@@ -7,6 +7,7 @@
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
+class QScrollArea;
 class QStackedWidget;
 
 namespace hn {
@@ -33,6 +34,7 @@ private:
     QJsonObject match;
     WorkerClient worker;
     WorkerClient transfer;
+    QScrollArea *area;
     PreviewTitle *name;
     QLabel *directoryLabel;
     QPlainTextEdit *directory;

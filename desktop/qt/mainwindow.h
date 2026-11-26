@@ -4,6 +4,7 @@
 #include <QMainWindow>
 
 class QAction;
+class QBoxLayout;
 class QCheckBox;
 class QCloseEvent;
 class QComboBox;
@@ -65,6 +66,7 @@ private:
     QWidget *optionsPane = nullptr;
     QComboBox *mode = nullptr;
     QSplitter *splitter = nullptr;
+    QBoxLayout *resultControls = nullptr;
     QComboBox *resultView = nullptr;
     ResultBrowser *results = nullptr;
     ResultNavigation *navigation = nullptr;
