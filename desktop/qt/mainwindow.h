@@ -12,6 +12,7 @@ class QLabel;
 class QLineEdit;
 class QMenu;
 class QPushButton;
+class QScrollArea;
 class QSplitter;
 class QToolButton;
 
@@ -71,6 +72,7 @@ private:
     ResultBrowser *results = nullptr;
     ResultNavigation *navigation = nullptr;
     PreviewPane *preview = nullptr;
+    QScrollArea *stackedPreview = nullptr;
     QMenu *fileMenu = nullptr;
     QMenu *searchMenu = nullptr;
     QMenu *languageMenu = nullptr;

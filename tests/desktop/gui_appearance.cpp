@@ -21,6 +21,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QScreen>
+#include <QSplitter>
 #include <QStyle>
 #include <QStyleHints>
 #include <QStyleOptionButton>
@@ -207,9 +208,11 @@ QString inspectLayout(QWidget &window)
         if (available < needed)
             return QString("Result view ‘%1’ needs %2 pixels, but its label has %3").arg(text).arg(needed).arg(available);
     }
+    auto *split = window.findChild<QSplitter *>("resultSplitter");
+    if (!split || split->count() != 2) return "Missing results or preview pane";
     const QStringList names = {"folderEdit", "browseButton", "queryEdit", "searchButton",
         "cancelButton", "optionsButton", "regexCheck", "caseCheck", "hiddenCheck", "ignoredCheck",
-        "filenamesCheck", "pathPatternEdit", "modeCombo", "resultsView", "previewPane"};
+        "filenamesCheck", "pathPatternEdit", "modeCombo", "resultsView", split->widget(1)->objectName()};
     for (const QString &name : names) {
         QWidget *w = window.findChild<QWidget *>(name);
         if (!w)

@@ -24,6 +24,7 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -33,6 +34,18 @@
 #include <QVBoxLayout>
 #include <cmath>
 #include <limits>
+
+namespace {
+class StackedPreview final : public QScrollArea {
+public:
+    using QScrollArea::QScrollArea;
+
+    QSize minimumSizeHint() const override
+    {
+        return widget() ? widget()->minimumSizeHint() : QScrollArea::minimumSizeHint();
+    }
+};
+}
 
 namespace hn {
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), worker(this)
@@ -160,6 +173,12 @@ void MainWindow::buildControls()
     navigation = new ResultNavigation(results, left);
     resultControls->addWidget(navigation);
     leftLayout->addWidget(results);
+    stackedPreview = new StackedPreview(body);
+    stackedPreview->setObjectName("previewScrollArea");
+    stackedPreview->setFrameShape(QFrame::NoFrame);
+    stackedPreview->setWidgetResizable(true);
+    stackedPreview->setFocusPolicy(Qt::NoFocus);
+    stackedPreview->hide();
     preview = new PreviewPane(splitter);
     splitter->addWidget(left);
     splitter->addWidget(preview);
@@ -478,9 +497,27 @@ void MainWindow::adaptLayout()
         + qMax(0, resultControls->spacing());
     const bool oneRow = orientation == Qt::Vertical && width() - margins.left() - margins.right() >= controlsWidth;
     resultControls->setDirection(oneRow ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
+    const bool stacked = orientation == Qt::Vertical;
+    preview->layout()->setContentsMargins(stacked ? 0 : previewGap, stacked ? previewGap : 0, 0, 0);
+    if (stacked != (stackedPreview->widget() != nullptr)) {
+        QWidget *focus = QApplication::focusWidget();
+        const bool restoreFocus = focus && preview->isAncestorOf(focus);
+        if (stacked) {
+            splitter->replaceWidget(1, stackedPreview);
+            preview->setScrollArea(stackedPreview);
+            stackedPreview->setWidget(preview);
+            stackedPreview->show();
+        } else {
+            stackedPreview->takeWidget();
+            preview->setScrollArea(nullptr);
+            splitter->replaceWidget(1, preview);
+            stackedPreview->setParent(centralWidget());
+            stackedPreview->hide();
+        }
+        preview->show();
+        if (restoreFocus) focus->setFocus();
+    }
     if (splitter->orientation() != orientation) splitter->setOrientation(orientation);
-    preview->layout()->setContentsMargins(orientation == Qt::Horizontal ? previewGap : 0,
-                                         orientation == Qt::Vertical ? previewGap : 0, 0, 0);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)

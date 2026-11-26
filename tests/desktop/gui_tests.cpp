@@ -506,18 +506,24 @@ private slots:
         QVERIFY(until([&] { return image->isVisible() && !image->pixmap().isNull(); }));
         QCOMPARE(control<QSplitter>("resultSplitter")->orientation(), Qt::Horizontal);
         QVERIFY(window->frameGeometry().width() <= 687 && window->frameGeometry().height() <= 455);
-        auto *area = control<QScrollArea>("previewScrollArea");
+        auto *pane = control<QSplitter>("resultSplitter")->widget(1);
         auto *fit = control<QAbstractButton>("fitPageButton");
-        QVERIFY(area && fit);
-        auto boundsInPreview = [area](QWidget *w) {
-            return QWidgetItem(w).geometry().translated(w->parentWidget()->mapTo(area->viewport(), QPoint()));
+        QVERIFY(pane && fit);
+        auto boundsInPreview = [pane](QWidget *w) {
+            return QWidgetItem(w).geometry().translated(w->parentWidget()->mapTo(pane, QPoint()));
         };
-        const bool complete = until([&] {
-            const QRect visible = area->viewport()->rect().adjusted(-1, -1, 1, 1);
-            return visible.contains(boundsInPreview(image)) && visible.contains(boundsInPreview(fit));
-        });
+        auto fullyVisible = [pane](QWidget *w) {
+            QRect bounds = QWidgetItem(w).geometry();
+            for (auto *parent = w->parentWidget(); parent; parent = parent->parentWidget()) {
+                if (!parent->rect().adjusted(-1, -1, 1, 1).contains(bounds)) return false;
+                if (parent == pane) return !bounds.isEmpty();
+                bounds.translate(parent->pos());
+            }
+            return false;
+        };
+        const bool complete = until([&] { return fullyVisible(image) && fullyVisible(fit); });
         if (!complete) {
-            qWarning() << "Visible preview" << area->viewport()->rect() << "page" << boundsInPreview(image)
+            qWarning() << "Visible preview" << pane->contentsRect() << "page" << boundsInPreview(image)
                        << "Fit button" << boundsInPreview(fit);
             VERIFY_OK(guiqa::saveView(*window, "compact-fit-geometry"));
         }
@@ -655,6 +661,7 @@ private slots:
             QCOMPARE(QDir(directory->toPlainText()).canonicalPath(), docs.canonicalPath());
             directory->moveCursor(QTextCursor::End);
             directory->ensureCursorVisible();
+            QWidget *visiblePane = orientation == Qt::Vertical ? area->viewport() : split->widget(1);
             QRect headingRect, pathRect, buttonRect, caretRect;
             const bool readable = until([&] {
                 headingRect = QRect(heading->mapTo(window.get(), QPoint()), heading->size());
@@ -663,12 +670,14 @@ private slots:
                 // Qt's layout rectangle excludes a native button's transparent shadow margins.
                 buttonRect = QWidgetItem(open).geometry().translated(open->parentWidget()->mapTo(window.get(), QPoint()));
                 caretRect = directory->cursorRect();
-                const auto caret = viewport->mapTo(area->widget(), caretRect.center());
-                area->ensureVisible(caret.x(), caret.y(), 1, caretRect.height() / 2 + 1);
-                const QRect visibleCaret(viewport->mapTo(area->viewport(), caretRect.topLeft()), caretRect.size());
+                if (orientation == Qt::Vertical) {
+                    const auto caret = viewport->mapTo(area->widget(), caretRect.center());
+                    area->ensureVisible(caret.x(), caret.y(), 1, caretRect.height() / 2 + 1);
+                }
+                const QRect visibleCaret(viewport->mapTo(visiblePane, caretRect.topLeft()), caretRect.size());
                 return std::abs(headingRect.left() - buttonRect.left()) <= 8
                     && pathRect.top() >= headingRect.bottom() && buttonRect.top() >= pathRect.bottom() - 2
-                    && area->viewport()->rect().adjusted(-2, -2, 2, 2).contains(visibleCaret)
+                    && visiblePane->rect().adjusted(-2, -2, 2, 2).contains(visibleCaret)
                     && viewport->rect().adjusted(-2, -2, 2, 2).contains(caretRect);
             });
             if (!readable) {
@@ -681,10 +690,10 @@ private slots:
             directory->selectAll();
             QCOMPARE(directory->textCursor().selectedText(), directory->toPlainText());
             directory->moveCursor(QTextCursor::Start);
-            area->ensureWidgetVisible(open, 0, 0);
-            const auto action = QWidgetItem(open).geometry().translated(open->parentWidget()->mapTo(area->viewport(), QPoint()));
-            QVERIFY2(!action.isEmpty() && area->viewport()->rect().contains(action), "Open original must be reachable");
-            area->verticalScrollBar()->setValue(0);
+            if (orientation == Qt::Vertical) area->ensureWidgetVisible(open, 0, 0);
+            const auto action = QWidgetItem(open).geometry().translated(open->parentWidget()->mapTo(visiblePane, QPoint()));
+            QVERIFY2(!action.isEmpty() && visiblePane->rect().contains(action), "Open original must be reachable");
+            if (orientation == Qt::Vertical) area->verticalScrollBar()->setValue(0);
             VERIFY_OK(guiqa::inspectLayout(*window));
         }
         VERIFY_OK(guiqa::saveView(*window, "progress-and-errors-narrow"));

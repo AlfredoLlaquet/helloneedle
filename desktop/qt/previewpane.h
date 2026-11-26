@@ -17,6 +17,8 @@ class PreviewTitle;
 class PreviewPane : public QWidget {
 public:
     explicit PreviewPane(QWidget *parent = nullptr);
+    int heightForWidth(int width) const override;
+    void setScrollArea(QScrollArea *scroll);
     void clear();
     void showMatch(const QJsonObject &event);
     void retranslate();
@@ -34,7 +36,7 @@ private:
     QJsonObject match;
     WorkerClient worker;
     WorkerClient transfer;
-    QScrollArea *area;
+    QScrollArea *area = nullptr;
     PreviewTitle *name;
     QLabel *directoryLabel;
     QPlainTextEdit *directory;
