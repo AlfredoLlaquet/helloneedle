@@ -15,7 +15,7 @@
 
 Hello Needle finds a word or phrase inside the documents on your computer. Choose a folder and it searches the files in that folder and its subfolders. Select a match to see the sentence in a Word document, the cell in a spreadsheet, or the highlighted words on a PDF page. The application runs on FreeBSD, Ubuntu, Windows, and macOS, in English and Spanish.
 
-Created by **Alfredo Llaquet-Alsina**. Programmed by **ChatGPT**.
+Created and directed by **Alfredo Llaquet-Alsina**. Implemented by **ChatGPT**.
 
 ## Download Hello Needle
 
